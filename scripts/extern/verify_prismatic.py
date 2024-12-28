@@ -9,7 +9,8 @@ import time
 import requests
 import torch
 from PIL import Image
-from transformers import AutoModelForVision2Seq, AutoProcessor
+# from transformers import AutoModelForVision2Seq, AutoProcessor
+from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
 
 # === Verification Arguments ===
 MODEL_PATH = "TRI-ML/prismatic-siglip-224px-7b"
