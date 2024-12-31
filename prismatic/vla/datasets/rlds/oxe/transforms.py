@@ -840,6 +840,11 @@ def libero_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["gripper_state"] = trajectory["observation"]["state"][:, -2:]  # 2D gripper state
     return trajectory
 
+def cobot_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    # import pdb; pdb.set_trace()
+    trajectory["language_instruction"] = trajectory["instruction"]
+    trajectory["observation"]["qpos"] = trajectory["qpos"]
+    return trajectory
 
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
@@ -919,4 +924,6 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "libero_object_no_noops": libero_dataset_transform,
     "libero_goal_no_noops": libero_dataset_transform,
     "libero_10_no_noops": libero_dataset_transform,
+    ### Cobot
+    "cobot_rlds_dataset": cobot_dataset_transform,
 }

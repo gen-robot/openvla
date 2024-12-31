@@ -1,7 +1,7 @@
-torchrun --standalone --nnodes 1 --nproc-per-node 8 vla-scripts/finetune.py \
+torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
   --vla_path "openvla/openvla-7b" \
-  --data_root_dir datasets/oxe_data \
-  --dataset_name bridge \
+  --data_root_dir datasets \
+  --dataset_name cobot_rlds_dataset \
   --run_root_dir checkpoints \
   --adapter_tmp_dir checkpoints/_tmp_adapter \
   --lora_rank 32 \
