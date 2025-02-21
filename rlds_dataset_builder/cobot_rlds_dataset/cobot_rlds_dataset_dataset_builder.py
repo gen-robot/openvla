@@ -49,7 +49,7 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
                     'base_action': tfds.features.Tensor(shape=(2,), dtype=np.float32,),
                     'qpos': tfds.features.Tensor(shape=(14,), dtype=np.float32,),
                     'qvel': tfds.features.Tensor(shape=(14,), dtype=np.float32,),
-                    'instruction': tfds.features.Text(),
+                    'instruction': tfds.features.Text(), # TODO: language_instruction instead of instruction
                     'terminate_episode': tfds.features.Tensor(shape=(), dtype=np.bool_),
                     # 'language_embedding': tfds.features.Tensor(shape=(512,), dtype=np.float32,
                     #     doc='Kona language embedding. '
@@ -66,7 +66,7 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(path='/nvme_data/embodied_agent/cobot_data/high_cam_open_drawer_and_put_item/episode_*.hdf5'),
+            'train': self._generate_examples(path='/nvme_data/embodied_agent/cobot_data/new_open_drawer/episode_*.hdf5'),
             # 'val': self._generate_examples(path='data/val/episode_*.npy'),
         }
 
@@ -108,13 +108,13 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
             
             def process_action(action, step):
                 return action[step] / np.array([
-                    1, 1, 1, 1, 1, 1, GRIPPER_SCALE["action"][0], 
-                    1, 1, 1, 1, 1, 1, GRIPPER_SCALE["action"][1]
+                    1, 1, 1, 1, 1, 1, GRIPPER_SCALE["qpos"][0], 
+                    1, 1, 1, 1, 1, 1, GRIPPER_SCALE["qpos"][1]
                 ])
             
             # assemble episode --> here we're assuming demos so we set reward to 1 at the end
             episode = []
-            for i in range(first_idx-1, num_episodes):
+            for i in range(first_idx-1, num_episodes-1):
                 # print("check img size", parse_img('cam_high', i, f.attrs.get('compress', True)).shape)
                 # import pdb; pdb.set_trace()
                 episode.append({
@@ -125,10 +125,10 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
                     },
                     'qpos': process_qpos(f['observations']['qpos'], i).astype(np.float32),
                     'qvel': f['observations']['qvel'][i].astype(np.float32),
-                    'action': process_action(f['action'], i).astype(np.float32),
+                    'action': process_qpos(f['observations']['qpos'], i+1).astype(np.float32), #process_action(f['action'], i).astype(np.float32),
                     'base_action': f['base_action'][i].astype(np.float32),
                     'instruction': instruction,
-                    'terminate_episode': i == num_episodes - 1,
+                    'terminate_episode': i == num_episodes - 2,
                 })
 
             # create output data sample

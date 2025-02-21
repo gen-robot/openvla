@@ -5,7 +5,7 @@ Given an HF-exported OpenVLA model, attempt to load via AutoClasses, and verify 
 """
 
 import time
-
+import os
 import numpy as np
 import torch
 from PIL import Image
@@ -54,10 +54,11 @@ def verify_openvla() -> None:
         attn_implementation="flash_attention_2",
         torch_dtype=torch.bfloat16,
         quantization_config=BitsAndBytesConfig(
-            load_in_8bit=True, bnb_4bit_compute_dtype=torch.bfloat16,
+            load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16,
         ),
         low_cpu_mem_usage=True,
         trust_remote_code=True,
+        device_map="cuda",
     )
 
     # === 4-BIT QUANTIZATION MODE (`pip install bitsandbytes`) :: [~6GB of VRAM Passive || 7GB of VRAM Active] ===
@@ -76,9 +77,9 @@ def verify_openvla() -> None:
 
     print("[*] Iterating with Randomly Generated Images")
     total_time = 0
-    for _ in range(100):
+    for _ in range(10):
         prompt = get_openvla_prompt(INSTRUCTION)
-        image = Image.fromarray(np.asarray(np.random.rand(256, 256, 3) * 255, dtype=np.uint8))
+        image = Image.fromarray(np.asarray(np.random.rand(480, 640, 3) * 255, dtype=np.uint8))
 
         # === BFLOAT16 MODE ===
         inputs = processor(prompt, image).to(device, dtype=torch.bfloat16)
@@ -93,7 +94,7 @@ def verify_openvla() -> None:
         total_time += dt
         print(f"\t=>> Time: {dt:.4f} || Action: {action}")
 
-    print(f"[*] Average Inference Time: {total_time / 100:.4f} seconds")
+    print(f"[*] Average Inference Time: {total_time / 10:.4f} seconds")
 
 
 if __name__ == "__main__":

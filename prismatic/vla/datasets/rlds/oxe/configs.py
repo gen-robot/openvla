@@ -56,7 +56,7 @@ OXE_DATASET_CONFIGS = {
         "image_obs_keys": {"primary": "cam_high", "secondary": "cam_left_wrist", "wrist": "cam_right_wrist"},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["qpos"],
-        "state_encoding": StateEncoding.JOINT,
+        "state_encoding": StateEncoding.JOINT_BIMANUAL,
         "action_encoding": ActionEncoding.JOINT_POS_BIMANUAL,
     },
     "fractal20220817_data": {

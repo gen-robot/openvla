@@ -1,11 +1,13 @@
-torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
+task_name="open_drawer_2"
+
+torchrun --standalone --nnodes 1 --nproc-per-node 3 vla-scripts/finetune_cobot.py \
   --vla_path "openvla/openvla-7b" \
   --data_root_dir datasets \
   --dataset_name cobot_rlds_dataset \
-  --run_root_dir checkpoints \
-  --adapter_tmp_dir checkpoints/_tmp_adapter \
-  --lora_rank 32 \
-  --batch_size 12 \
+  --run_root_dir checkpoints/${task_name} \
+  --adapter_tmp_dir checkpoints/${task_name}/_tmp_adapter \
+  --lora_rank 64 \
+  --batch_size 6 \
   --grad_accumulation_steps 1 \
   --learning_rate 5e-4 \
   --image_aug True \

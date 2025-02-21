@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 import draccus
+import numpy as np
 import torch
 import torch.distributed as dist
 import tqdm
@@ -52,6 +53,18 @@ from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, Pr
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+# | JOINT | LEFT_MIN | LEFT_MAX | RIGHT_MIN | RIGHT_MAX |
+# |:-----:|:--------:|:--------:|:---------:|:---------:|
+# |   1   |  -2.614  |   2.610  |   -2.614  |   2.608   |
+# |   2   |  -0.009  |   3.17   |   -0.009  |   3.17    |
+# |   3   |  -2.997  |   0.007  |   -2.995  |   0.012   |
+# |   4   |  -1.830  |   1.826  |   -1.766  |   1.835   |
+# |   5   |  -1.194  |   1.286  |   -1.250  |   1.287   |
+# |   6   |  -2      |   2      |   -2      |   2       |
+# |   7   |  0       |   0.066  |   0       |   0.066   |
+
+MIN_ACTION = np.array([-2.614, -0.009, -2.997, -1.830, -1.194, -2.0, 0.0]*2)
+MAX_ACTION = np.array([2.610, 3.17, 0.007, 1.826, 1.286, 2.0, 1.0]*2)
 
 # # === Utilities ===
 # # fmt: off
@@ -189,7 +202,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     optimizer = AdamW(trainable_params, lr=cfg.learning_rate)
 
     # Create Action Tokenizer
-    action_tokenizer = ActionTokenizer(processor.tokenizer)
+    action_tokenizer = ActionTokenizer(processor.tokenizer) #, min_action=MIN_ACTION, max_action=MAX_ACTION) # FIXME: hard-coded debug
 
     # Load Fine-tuning Dataset =>> note that we use an RLDS-formatted dataset following Open X-Embodiment by default.
     #   =>> If you want to use a non-RLDS dataset (e.g., a standard PyTorch Dataset) see the following commented block.
