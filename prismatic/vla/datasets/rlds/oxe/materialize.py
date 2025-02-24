@@ -45,8 +45,8 @@ def make_oxe_dataset_kwargs(
         dataset_kwargs["absolute_action_mask"] = [False] * 9 + [True]
         dataset_kwargs["action_normalization_mask"] = [True] * 9 + [False]
     elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS:
-        dataset_kwargs["absolute_action_mask"] = [True] * 7
-        dataset_kwargs["action_normalization_mask"] = [False] * 7
+        dataset_kwargs["absolute_action_mask"] = [False] * 7 + [True]
+        dataset_kwargs["action_normalization_mask"] = [True] * 7 + [False]
     elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS_BIMANUAL:
         dataset_kwargs["absolute_action_mask"] = [False] * 6 + [True] + [False] * 6 + [True]
         dataset_kwargs["action_normalization_mask"] = [True] * 6 + [False] + [True] * 6 + [False]

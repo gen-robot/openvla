@@ -52,6 +52,20 @@ class ActionEncoding(IntEnum):
 
 # === Individual Dataset Configs ===
 OXE_DATASET_CONFIGS = {
+    "example_dataset": {
+        "image_obs_keys": {"primary": "image_primary", "secondary": None, "wrist": None},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["state"],
+        "state_encoding": StateEncoding.JOINT,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "cobot_future_dataset": {
+        "image_obs_keys": {"primary": "cam_high", "secondary": "cam_left_wrist", "wrist": "cam_right_wrist"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["qpos"],
+        "state_encoding": StateEncoding.JOINT_BIMANUAL,
+        "action_encoding": ActionEncoding.JOINT_POS_BIMANUAL,
+    },
     "cobot_rlds_dataset": {
         "image_obs_keys": {"primary": "cam_high", "secondary": "cam_left_wrist", "wrist": "cam_right_wrist"},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
