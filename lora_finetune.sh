@@ -1,9 +1,9 @@
-task_name="open_drawer_2"
+task_name="maniskill"
 
-torchrun --standalone --nnodes 1 --nproc-per-node 4 vla-scripts/finetune_cobot.py \
+torchrun --standalone --nnodes 1 --nproc-per-node 3 vla-scripts/finetune_cobot.py \
   --vla_path "openvla/openvla-7b" \
   --data_root_dir datasets \
-  --dataset_name cobot_future_dataset \
+  --dataset_name mani_skill_rlds_dataset \
   --run_root_dir checkpoints/${task_name} \
   --adapter_tmp_dir checkpoints/${task_name}/_tmp_adapter \
   --lora_rank 64 \

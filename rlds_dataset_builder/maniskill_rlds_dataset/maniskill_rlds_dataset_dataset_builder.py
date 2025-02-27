@@ -49,12 +49,33 @@ import json
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow_hub as hub
+from PIL import Image
 
 import h5py
 
 GRIPPER_SCALE = {
     "qpos": [0.066, 0.066],
     "action": [0.072, 0.072]
+}
+
+
+
+DATASET_STATS = {'state_min': np.array([-0.7463043928146362, -0.0801204964518547, -0.4976441562175751, -2.657780647277832, -0.5742632150650024, 1.8309762477874756, -2.2423808574676514, 0.0, 0.0]), 
+                 'state_max': np.array([0.7645499110221863, 1.4967026710510254, 0.4650936424732208, -0.3866899907588959, 0.5505855679512024, 3.2900545597076416, 2.5737812519073486, 0.03999999910593033, 0.03999999910593033]), 
+                 'action_min': np.array([-0.7472005486488342, -0.08631071448326111, -0.4995281398296356, -2.658363103866577, -0.5751323103904724, 1.8290787935256958, -2.245187997817993, -1.0]), 
+                 'action_max': np.array([0.7654682397842407, 1.4984270334243774, 0.46786263585090637, -0.38181185722351074, 0.5517147779464722, 3.291581630706787, 2.575840711593628, 1.0]), 
+                 'action_std': np.array([0.2199309915304184, 0.18780815601348877, 0.13044124841690063, 0.30669933557510376, 0.1340624988079071, 0.24968451261520386, 0.9589747190475464, 0.9827960729598999]), 
+                 'action_mean': np.array([-0.00885344110429287, 0.5523102879524231, -0.007564723491668701, -2.0108158588409424, 0.004714342765510082, 2.615924596786499, 0.08461848646402359, -0.19301606714725494])}
+
+
+TASK2LANG = {
+    "PegInsertionSide-v1": "Pick up a orange-white peg and insert the orange end into the box with a hole in it.",
+    "PickCube-v1": "Grasp a red cube and move it to a target goal position.",
+    "StackCube-v1":  "Pick up a red cube and stack it on top of a green cube and let go of the cube without it falling.",
+    "PlugCharger-v1": "Pick up one of the misplaced shapes on the board/kit and insert it into the correct empty slot.",
+    "PushCube-v1": "Push and move a cube to a goal region in front of it.",
+    "StackCube-v2":  "Pick up a red cube and stack it on top of a green cube and let go of the cube without it falling.",
+    "StackCube-v1-correction":  "Mission failure detected! Re-pick up the red cube first. After that continue to tack it on top of a green cube.",
 }
 
 
@@ -75,133 +96,94 @@ class ManiSkillRldsDataset(tfds.core.GeneratorBasedBuilder):
         return self.dataset_info_from_configs(
             features=tfds.features.FeaturesDict({
                 'steps': tfds.features.Dataset({
-                    'obs': tfds.features.FeaturesDict({
-                        'agent': tfds.features.FeaturesDict({
-                            'qpos': tfds.features.Tensor(shape=(9), dtype=np.float32,),
-                            'qvel': tfds.features.Tensor(shape=(9), dtype=np.float32,),
-                        }),
-                        'extra': tfds.features.FeaturesDict({
-                            'is_grasped': tfds.features.Tensor(shape=(1,), dtype=np.bool_),
-                            'tcp_pose': tfds.features.Tensor(shape=(7), dtype=np.float32,),
-                            'goal_pos': tfds.features.Tensor(shape=(3), dtype=np.float32,),
-                        }),
-                        'sensor_param': tfds.features.FeaturesDict({
-                            'base_camera': tfds.features.FeaturesDict({
-                                'extrinsic_cv': tfds.features.Tensor(shape=(3, 4), dtype=np.float32,),
-                                'cam2world_gl': tfds.features.Tensor(shape=(4, 4), dtype=np.float32,),
-                                'intrinsic_cv': tfds.features.Tensor(shape=(3, 3), dtype=np.float32,),
-                            }),
-                        }),
-                        'sensor_data': tfds.features.FeaturesDict({
-                            'base_camera': tfds.features.Image(
-                                shape=(512, 512, 3), dtype=np.uint8, encoding_format='jpeg',
-                            ),
-                        }),
+                    'observation': tfds.features.FeaturesDict({
+                        'image_primary': tfds.features.Image(
+                            shape=(512, 512, 3), dtype=np.uint8, encoding_format='jpeg',
+                        ),
                     }),
+                    'qpos': tfds.features.Tensor(shape=(9,), dtype=np.float32,),
                     'action': tfds.features.Tensor(shape=(8,), dtype=np.float32,),
-                    'terminated': tfds.features.Tensor(shape=(1,), dtype=np.bool_,),
-                    'truncated': tfds.features.Tensor(shape=(1,), dtype=np.bool_,),
-                    'success': tfds.features.Tensor(shape=(1,), dtype=np.bool_,),
-                    'env_states': tfds.features.FeaturesDict({
-                        'actors': tfds.features.FeaturesDict({
-                            'table-workspace': tfds.features.Tensor(shape=(13,), dtype=np.float32,),
-                            'cube': tfds.features.Tensor(shape=(13,), dtype=np.float32,),
-                            'goal_site': tfds.features.Tensor(shape=(13,), dtype=np.float32,),
-                        }),
-                    }),
+                    'lang_instruction': tfds.features.Text(
+                        doc='Language instruction for the task.'
+                    ),
+                    'terminate_episode': tfds.features.Tensor(shape=(), dtype=np.bool_,),
                 }),
                 'episode_metadata': tfds.features.FeaturesDict({
                     'file_path': tfds.features.Text(
                         doc='Path to the original data file.'
                     ),
+                    'task_inner_index': tfds.features.Tensor(shape=(), dtype=np.int32,),
                 }),
             }))
 
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(path='/nvme_data/embodied_agent/cobot_data/new_open_drawer/episode_*.hdf5'),
+            'train': self._generate_examples(path='/nvme_data/embodied_agent/pretrained/rdt-maniskill/demo_1k'),
             # 'val': self._generate_examples(path='data/val/episode_*.npy'),
         }
 
     def _generate_examples(self, path) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
 
-        def _parse_example(episode_path):
-            # load raw data --> this should change for your dataset
-            # data = np.load(episode_path, allow_pickle=True)     # this is a list of dicts in our case
-            f = h5py.File(episode_path, 'r')
-            with open(os.path.join(
-                os.path.dirname(episode_path), 
-                'expanded_instruction_gpt-4-turbo.json'), 'r'
-            ) as f_instr:
-                instruction = json.load(f_instr)['instruction']
-            # Remove the first few still steps
-            EPS = 1e-2
-            num_episodes = f['action'].shape[0]
-            qpos = f['observations']['qpos'][:]
-            qpos_delta = np.abs(qpos - qpos[0:1])
-            indices = np.where(np.any(qpos_delta > EPS, axis=1))[0]
-            if len(indices) > 0:
-                first_idx = indices[0]
-            else:
-                raise ValueError("Found no qpos that exceeds the threshold.")
-            
-            def parse_img(key, step, compressed=True):
-                if compressed:
-                    return cv2.imdecode(np.frombuffer(
-                        f['observations']['images'][key][step], np.uint8), cv2.IMREAD_COLOR)
-                else:
-                    return f['observations']['images'][key][step]
-                
-            def process_qpos(qpos, step):
-                return qpos[step] / np.array([
-                    1, 1, 1, 1, 1, 1, GRIPPER_SCALE["qpos"][0], 
-                    1, 1, 1, 1, 1, 1, GRIPPER_SCALE["qpos"][1]
-                ])
-            
-            def process_action(action, step):
-                return action[step] / np.array([
-                    1, 1, 1, 1, 1, 1, GRIPPER_SCALE["qpos"][0], 
-                    1, 1, 1, 1, 1, 1, GRIPPER_SCALE["qpos"][1]
-                ])
-            
-            # assemble episode --> here we're assuming demos so we set reward to 1 at the end
+        def _parse_example(data, task_dir, traj_idx, lang):
+            states = data['obs']['agent']['qpos'][:]
+            actions = data['actions'][:]
+
+            # normalize the states
+            states = (states - DATASET_STATS['state_min']) / (DATASET_STATS['state_max'] - DATASET_STATS['state_min']) * 2 - 1
+            actions = (actions - DATASET_STATS['action_min']) / (DATASET_STATS['action_max'] - DATASET_STATS['action_min']) * 2 - 1
+            states = states.astype(np.float32)
+            actions = actions.astype(np.float32)
+
+            num_steps = len(actions)
+            proc_index = traj_idx // 100
+            episode_index = traj_idx % 100
+
             episode = []
-            for i in range(first_idx-1, num_episodes-1):
-                # print("check img size", parse_img('cam_high', i, f.attrs.get('compress', True)).shape)
-                # import pdb; pdb.set_trace()
-                episode.append({
-                    'observation': {
-                        'cam_high': parse_img('cam_high', i, f.attrs.get('compress', True)),
-                        'cam_left_wrist': parse_img('cam_left_wrist', i, f.attrs.get('compress', True)),
-                        'cam_right_wrist': parse_img('cam_right_wrist', i, f.attrs.get('compress', True)),
-                    },
-                    'qpos': process_qpos(f['observations']['qpos'], i).astype(np.float32),
-                    'qvel': f['observations']['qvel'][i].astype(np.float32),
-                    'action': process_qpos(f['observations']['qpos'], i+1).astype(np.float32), #process_action(f['action'], i).astype(np.float32),
-                    'base_action': f['base_action'][i].astype(np.float32),
-                    'instruction': instruction,
-                    'terminate_episode': i == num_episodes - 2,
-                })
+            for i in range(num_steps):
+                img_path = os.path.join(task_dir, 'motionplanning', f'{proc_index}', f'{episode_index}', f"{i}.png")
+                with Image.open(img_path) as image:
+                    img = np.array(image)
+                    episode.append({
+                        'observation': {
+                            'image_primary': img.copy(),
+                        },
+                        'qpos': states[i],
+                        'action': actions[i],
+                        'lang_instruction': lang,
+                        'terminate_episode': i == num_steps - 2
+                    })
 
             # create output data sample
             sample = {
                 'steps': episode,
                 'episode_metadata': {
-                    'file_path': episode_path
+                    'file_path': task_dir,
+                    'task_inner_index': traj_idx,
                 }
             }
+            example_id = os.path.basename(task_dir) + f'_{traj_idx}'
+            return example_id, sample
 
-            # if you want to skip an example for whatever reason, simply return None
-            return episode_path, sample
+        for task in os.listdir(path):
+            if task != "StackCube-v1":
+                continue
+            task_dir = os.path.join(path, task)
+            file_path = glob.glob(os.path.join(task_dir, 'motionplanning', '*.h5'))[0]
+            lang = TASK2LANG[task]
+            with h5py.File(file_path, "r") as f:
+                trajs = f.keys() #  traj_0, traj_1,
+                # sort by the traj number
+                trajs = sorted(trajs, key=lambda x: int(x.split('_')[-1]))
+                for traj_idx, traj in enumerate(trajs):
+                    if task == 'PegInsertionSide-v1' and traj_idx > 400:
+                        break
+                    yield _parse_example(f[traj], task_dir, traj_idx, lang)
 
-        # create list of all examples
-        episode_paths = glob.glob(path)
-
-        # for smallish datasets, use single-thread parsing
-        for sample in episode_paths:
-            yield _parse_example(sample)
+        # # for smallish datasets, use single-thread parsing
+        # for sample in episode_paths:
+        #     yield _parse_example(sample)
 
         # for large datasets use beam to parallelize data parsing (this will have initialization overhead)
         # beam = tfds.core.lazy_imports.apache_beam
