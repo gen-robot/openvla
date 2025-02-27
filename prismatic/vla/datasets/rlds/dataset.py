@@ -552,7 +552,7 @@ def make_interleaved_dataset(
             dataset_statistics=all_dataset_statistics[dataset_kwargs["name"]],
         )
         dataset = apply_trajectory_transforms(
-            dataset.repeat(),
+            dataset.repeat() if train else dataset,
             **traj_transform_kwargs,
             num_parallel_calls=threads,
             train=train,

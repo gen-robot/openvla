@@ -1,4 +1,4 @@
-
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +30,7 @@ def merge(cfg: MergeConfig) -> None:
     merge_path = run_path / cfg.lora_name.replace("lora", "merged")
     os.makedirs(merge_path, exist_ok=True)
 
-    processor = AutoProcessor.from_pretrained(run_path, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(str(run_path), trust_remote_code=True)
     base_vla = AutoModelForVision2Seq.from_pretrained(
         cfg.vla_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True
     )
@@ -44,6 +44,12 @@ def merge(cfg: MergeConfig) -> None:
     # Save processor and model weights to new directory
     processor.save_pretrained(merge_path)
     merged_vla.save_pretrained(merge_path)
+
+    # process norm_states
+    config = json.load((merge_path / "config.json").open())
+    new_norm_stat = json.load((merge_path / "dataset_statistics.json").open())
+    config["norm_stats"].update(new_norm_stat)
+    json.dump(config, (merge_path / "config.json").open("w"), indent=2)
 
 
 
