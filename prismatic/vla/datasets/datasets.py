@@ -154,6 +154,18 @@ class RLDSDataset(IterableDataset):
         raise NotImplementedError("IterableDataset does not implement map-style __getitem__; see __iter__ instead!")
 
 
+class DistributedRLDSDataset(RLDSDataset):
+    def __init__(self, *args, world_size: int, rank: int, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.world_size = world_size
+        self.rank = rank
+
+    def __iter__(self) -> Dict[str, Any]:
+        for i, rlds_batch in enumerate(self.dataset.as_numpy_iterator()):
+            if i % self.world_size == self.rank:
+                yield self.batch_transform(rlds_batch)
+
+
 class EpisodicRLDSDataset(RLDSDataset):
     """Returns full episodes as list of steps instead of individual transitions (useful for visualizations)."""
 

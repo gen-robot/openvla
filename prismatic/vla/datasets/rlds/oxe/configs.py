@@ -52,6 +52,13 @@ class ActionEncoding(IntEnum):
 
 # === Individual Dataset Configs ===
 OXE_DATASET_CONFIGS = {
+    "grape_simpler_sft_dataset":{
+        "image_obs_keys": {"primary": "image"},
+        "depth_obs_keys": {},
+        "state_obs_keys": [],
+        "state_encoding": None,
+        "action_encoding": None,
+    },
     "example_dataset": {
         "image_obs_keys": {"primary": "image_primary", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},

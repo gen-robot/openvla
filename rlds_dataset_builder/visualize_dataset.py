@@ -15,6 +15,7 @@ WANDB_PROJECT = 'vis_rlds'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('dataset_name', help='name of the dataset to visualize')
+parser.add_argument('--dir', help='dir')
 args = parser.parse_args()
 
 if WANDB_ENTITY is not None:
@@ -28,8 +29,8 @@ else:
 # create TF dataset
 dataset_name = args.dataset_name
 print(f"Visualizing data from dataset: {dataset_name}")
-module = importlib.import_module(dataset_name)
-ds = tfds.load(dataset_name, split='train')
+# module = importlib.import_module(dataset_name)
+ds = tfds.load(dataset_name, data_dir=args.dir, split='train')
 ds = ds.shuffle(100)
 
 # visualize episodes
@@ -37,7 +38,7 @@ for i, episode in enumerate(ds.take(5)):
     images = []
     for step in episode['steps']:
         images.append(step['observation']['image'].numpy())
-    image_strip = np.concatenate(images[::4], axis=1)
+    image_strip = np.concatenate(images[::20], axis=1)
     caption = step['language_instruction'].numpy().decode() + ' (temp. downsampled 4x)'
 
     if render_wandb:
