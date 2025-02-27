@@ -122,7 +122,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     torch.cuda.empty_cache()
 
     # Configure Unique Experiment ID & Log Directory
-    exp_id = f"steps_{cfg.save_steps}"
+    exp_id = f"steps_{cfg.max_steps}"
 
     # Start =>> Build Directories
     run_dir = cfg.run_root_dir / exp_id
