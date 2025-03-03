@@ -59,6 +59,13 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": None,
         "action_encoding": None,
     },
+    "mani_skill_rlds_dataset": {
+        "image_obs_keys": {"primary": "image_primary", "secondary": None, "wrist": None},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["state"],
+        "state_encoding": StateEncoding.JOINT,
+        "action_encoding": ActionEncoding.JOINT_POS,
+    },
     "example_dataset": {
         "image_obs_keys": {"primary": "image_primary", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},

@@ -855,7 +855,12 @@ def cobot_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 def example_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     # import pdb; pdb.set_trace()
     # trajectory["language_instruction"] = trajectory["instruction"]
-    trajectory["observation"]["proprio"] = trajectory["observation"]["state"]
+    trajectory["observation"]["qpos"] = trajectory["observation"]["state"]
+    return trajectory
+
+def maniskill_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    trajectory["language_instruction"] = trajectory["lang_instruction"]
+    trajectory["observation"]["qpos"] = trajectory["qpos"]
     return trajectory
 
 # === Registry ===
@@ -942,4 +947,5 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "cobot_future_dataset": cobot_dataset_transform,
     ### maniskill
     "example_dataset": example_dataset_transform,
+    "mani_skill_rlds_dataset": maniskill_dataset_transform,
 }
