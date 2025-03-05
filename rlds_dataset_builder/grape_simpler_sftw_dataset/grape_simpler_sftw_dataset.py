@@ -50,8 +50,8 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(25, spare=3),
-            'val': self._generate_examples(3, start=25),
+            'train': self._generate_examples(70, spare=3),
+            'val': self._generate_examples(3, start=70),
         }
 
     def _generate_examples(self, num_ep, spare=0, start=0) -> Iterator[Tuple[str, Any]]:
@@ -62,11 +62,11 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
 
             episode = []
             success_count = 0
-            for i in range(len(data["action"])):
+            for i in range(1, len(data["action"])):
 
                 episode.append({
                     'observation': {
-                        'image': np.asarray(data["image"][i]),
+                        'image': np.asarray(data["image"][i - 1]),
                     },
                     'action': data["action"][i],
                     'language_instruction': data['instruction'],
@@ -108,5 +108,4 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             sample = _parse_example(ep_path)
             yield ep_path, sample
 
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_sft_dataset_100
 # mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_sft_dataset_268
