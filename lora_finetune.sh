@@ -1,12 +1,13 @@
-task_name="grape_simpler_sft_dataset"
+task_name="grape_simpler_sft_dataset_100"
 
-torchrun --standalone --nnodes 1 --nproc-per-node 7 vla-scripts/finetune_distributed.py \
+CUDA_VISIBLE_DEVICES=3,4,5,6 \
+torchrun --standalone --nnodes 1 --nproc-per-node 4 vla-scripts/finetune_distributed.py \
   --vla_path "openvla/openvla-7b" \
   --data_root_dir "../datasets" \
   --dataset_name ${task_name} \
   --run_root_dir checkpoints/${task_name} \
   --lora_rank 32 \
-  --batch_size 8 \
+  --batch_size 20 \
   --max_steps 4000 \
   --save_steps 50 \
   --grad_accumulation_steps 1 \
@@ -17,7 +18,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node 7 vla-scripts/finetune_distrib
 
 #mv checkpoints/grape_simpler_sft checkpoints/grape_simpler_sft_dataset
 
-#torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/merge_lora.py \
-#  --vla_path "openvla/openvla-7b" \
-#  --run_path "checkpoints/${task_name}/steps_4000" \
-#  --lora_name "lora_000550"
+torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/merge_lora.py \
+  --vla_path "openvla/openvla-7b" \
+  --run_path "checkpoints/${task_name}/steps_4000" \
+  --lora_name "lora_000500"

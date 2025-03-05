@@ -481,9 +481,9 @@ class FinetuneConfig:
 
     # Directory Paths
     #data_root_dir: Path = Path("/data/zhaoyang_wang/projects/OpenVLA/dataset")        # Path to Open-X dataset directory
-    chosen_traj_dir: Path = Path("path/to/chosen/traj")
-    rejected_traj_dir: Path = Path("path/to/rejected/traj")
-    dataset_name: str = "bridge_orig"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
+    traj_dir: Path = Path("path/to/chosen/traj")
+    dataset_s_name: str = "bridge_orig"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
+    dataset_f_name: str = "bridge_orig"  # Name of fine-tuning dataset (e.g., `droid_wipe`)
     run_root_dir: Path = Path("runs")                               # Path to directory to store logs & checkpoints
     adapter_tmp_dir: Path = Path("adapter-tmp")                     # Temporary directory for LoRA weights before fusing
 
@@ -618,8 +618,8 @@ def finetune(cfg: FinetuneConfig) -> None:
     )
 
     episode_chosen=EpisodicRLDSDataset(
-        cfg.chosen_traj_dir,
-        cfg.dataset_name,
+        cfg.traj_dir,
+        cfg.dataset_s_name,
         resize_resolution=tuple([224,224]),
         batch_transform=RLDSTransform,
         shuffle_buffer_size=1,
@@ -627,8 +627,8 @@ def finetune(cfg: FinetuneConfig) -> None:
     )
 
     episode_rejected=EpisodicRLDSDataset(
-        cfg.rejected_traj_dir,
-        cfg.dataset_name,
+        cfg.traj_dir,
+        cfg.dataset_f_name,
         resize_resolution=tuple([224,224]),
         batch_transform=RLDSTransform,
         shuffle_buffer_size=1,

@@ -322,8 +322,9 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         #   => Multimodal Forward :: (pixel_values is not None) and (input_ids/embeds.shape[0] == pixel_values.shape[0])
 
         # === Handle Generation with Cache (`input_ids.shape[1] == 1`) =>> requires `past_keys_values` ===
+
         if input_ids.shape[1] == 1:
-            assert input_ids.shape[0] == 1, "Generation is only currently supported for batch size of 1!"
+            # assert input_ids.shape[0] == 1, "Generation is only currently supported for batch size of 1!"
             assert past_key_values is not None, "You must provide `past_key_values` during cached generation!"
             assert labels is None, "Unexpected key `labels` provided during cached generation!"
 
@@ -457,10 +458,10 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         **kwargs: str,
     ) -> Dict[str, torch.Tensor]:
         """Borrowed from `LlamaForCausalLM` and simplified for batch size = 1; mirrors original PrismaticVLM logic."""
-        if ((input_ids is not None) and (input_ids.shape[0] > 1)) or (
-            (inputs_embeds is not None) and (inputs_embeds.shape[0] > 1)
-        ):
-            raise ValueError("Generation with batch size > 1 is not currently supported!")
+        # if ((input_ids is not None) and (input_ids.shape[0] > 1)) or (
+        #     (inputs_embeds is not None) and (inputs_embeds.shape[0] > 1)
+        # ):
+        #     raise ValueError("Generation with batch size > 1 is not currently supported!")
 
         # Handle `past_key_values` (cache) =>> assume `input_ids` just has unprocessed tokens
         if past_key_values is not None:
@@ -527,6 +528,43 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         action_norm_stats = self.get_action_stats(unnorm_key)
         mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))
         action_high, action_low = np.array(action_norm_stats["q99"]), np.array(action_norm_stats["q01"])
+        actions = np.where(
+            mask,
+            0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
+            normalized_actions,
+        )
+
+        return actions
+
+    def predict_action_batch(
+        self, input_ids: Optional[torch.LongTensor] = None, unnorm_key: Optional[str] = None, **kwargs: str
+    ) -> np.ndarray:
+
+        batch_size = input_ids.shape[0]
+        device = input_ids.device
+
+        if not torch.all(input_ids[:, -1] == 29871):
+            input_ids = torch.cat(
+                (input_ids, torch.Tensor([29871]).long().unsqueeze(dim=0).repeat(batch_size, 1).to(device)),
+                dim=1
+            )
+
+        # Run VLA inference
+        generated_ids = self.generate(input_ids, max_new_tokens=self.get_action_dim(unnorm_key), **kwargs)
+
+        # Extract predicted action tokens and translate into (normalized) continuous actions
+        pact_token = generated_ids[:, -self.get_action_dim(unnorm_key):].cpu().numpy() # [B, dim]
+        dact = self.vocab_size - pact_token # [B, dim]
+        dact = np.clip(dact - 1, a_min=0, a_max=self.bin_centers.shape[0] - 1) # [B, dim]
+        # normalized_actions = self.bin_centers[discretized_actions]
+        normalized_actions = np.asarray([self.bin_centers[da] for da in dact]) # [B, dim]
+
+        # Unnormalize actions
+        action_norm_stats = self.get_action_stats(unnorm_key)
+        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool)) # [dim]
+        mask = np.array(mask).reshape(1, -1).repeat(batch_size, axis=0) # [B, dim]
+        action_high = np.array(action_norm_stats["q99"]).reshape(1, -1).repeat(batch_size, axis=0) # [B, dim]
+        action_low = np.array(action_norm_stats["q01"]).reshape(1, -1).repeat(batch_size, axis=0) # [B, dim]
         actions = np.where(
             mask,
             0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
