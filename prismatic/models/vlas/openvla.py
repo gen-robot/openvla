@@ -102,6 +102,76 @@ class OpenVLA(PrismaticVLM):
 
         return actions
 
+    @torch.inference_mode()
+    def predict_action_batch(
+            self, image: list[Image], instruction: str, unnorm_key: Optional[str] = None, **kwargs: str
+    ) -> np.ndarray:
+        """
+        Core function for VLA inference; maps input image and task instruction to continuous action (de-tokenizes).
+
+        @param image: list of PIL Image as [height, width, 3]
+        @param instruction: list of task instruction string
+        @param unnorm_key: Optional dataset name for retrieving un-normalizing statistics; if None, checks that model
+                           was trained only on a single dataset, and retrieves those statistics.
+
+        @return Unnormalized (continuous) action vector --> end-effector deltas.
+        """
+        image_transform, tokenizer = self.vision_backbone.image_transform, self.llm_backbone.tokenizer
+        batch_size = len(image)
+
+        # Build VLA Prompt
+        prompt_builder = self.get_prompt_builder()
+        prompt_builder.add_turn(role="human", message=f"What action should the robot take to {instruction.lower()}?")
+        prompt_text = prompt_builder.get_prompt()
+
+        # Prepare Inputs
+        input_ids = tokenizer(prompt_text, truncation=True, return_tensors="pt").input_ids.to(self.device)
+        if isinstance(tokenizer, LlamaTokenizerFast):
+            # If the special empty token ('') does not already appear after the colon (':') token in the prompt
+            # (after "OUT:" or "ASSISTANT:"), insert it to match the inputs seen at training time
+            if not torch.all(input_ids[:, -1] == 29871):
+                input_ids = torch.cat(
+                    (input_ids, torch.Tensor([29871]).long().unsqueeze(dim=0).to(input_ids.device)),
+                    dim=1
+                )
+        else:
+            raise ValueError(f"Unsupported `tokenizer` type = {type(tokenizer)}")
+        input_ids = input_ids.repeat(batch_size, 1) # [B, seq]
+
+        # Preprocess Image
+        pixel_values = torch.stack([image_transform(img) for img in image], dim=0).to(self.device) # [B, 3, H, W]
+
+        # Invoke super().generate --> taps into `GenerationMixin` which (redirects) to `forward()`
+        autocast_dtype = self.llm_backbone.half_precision_dtype
+        with torch.autocast("cuda", dtype=autocast_dtype, enabled=self.enable_mixed_precision_training):
+            # fmt: off
+            generated_ids = super(PrismaticVLM, self).generate(
+                input_ids=input_ids,  # Shape: [B, seq]
+                pixel_values=pixel_values,  # Shape: [B, 3, res, res] or Dict[str, ...]
+                max_new_tokens=self.get_action_dim(unnorm_key),
+                **kwargs
+            )
+            # fmt: on
+
+        # Extract predicted action tokens and translate into (normalized) continuous actions
+        predicted_ids = generated_ids[:, -self.get_action_dim(unnorm_key):].cpu().numpy()
+        normalized_actions = np.asarray([self.action_tokenizer.decode_token_ids_to_actions(d) for d in predicted_ids])
+        # [B, dim]
+
+        # Un-normalize Actions
+        action_norm_stats = self.get_action_stats(unnorm_key)
+        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool)) # [dim]
+        mask = np.array(mask).reshape(1, -1).repeat(batch_size, axis=0) # [B, dim]
+        action_high = np.array(action_norm_stats["q99"]).reshape(1, -1).repeat(batch_size, axis=0) # [B, dim]
+        action_low = np.array(action_norm_stats["q01"]).reshape(1, -1).repeat(batch_size, axis=0) # [B, dim]
+        actions = np.where(
+            mask,
+            0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
+            normalized_actions,
+        )
+
+        return actions
+
     @staticmethod
     def _check_unnorm_key(norm_stats: Dict, unnorm_key: str) -> str:
         if unnorm_key is None:

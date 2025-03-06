@@ -15,7 +15,7 @@ WANDB_PROJECT = 'vis_rlds'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('dataset_name', help='name of the dataset to visualize')
-parser.add_argument('--dir', help='dir')
+parser.add_argument('--dir', help='dir', default="../../datasets")
 args = parser.parse_args()
 
 if WANDB_ENTITY is not None:
@@ -31,7 +31,8 @@ dataset_name = args.dataset_name
 print(f"Visualizing data from dataset: {dataset_name}")
 # module = importlib.import_module(dataset_name)
 ds = tfds.load(dataset_name, data_dir=args.dir, split='train')
-ds = ds.shuffle(100)
+print(f"Number of episodes: {len(ds)}")
+# ds = ds.shuffle(100)
 
 # visualize episodes
 for i, episode in enumerate(ds.take(5)):
@@ -58,6 +59,8 @@ actions = np.array(actions)
 # states = np.array(states)
 action_mean = actions.mean(0)
 # state_mean = states.mean(0)
+
+print(f"action demo: {actions[0]}")
 
 def vis_stats(vector, vector_mean, tag):
     assert len(vector.shape) == 2

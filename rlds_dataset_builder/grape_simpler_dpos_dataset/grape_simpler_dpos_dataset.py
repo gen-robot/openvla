@@ -16,12 +16,12 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.path = "../../../SimplerEnv/videos/collect"
+        self.path = "../../../SimplerEnv/videos/dpo"
         self.tasks = [
-            "octo-small_PutSpoonOnTableClothInScene-v1",
-            "octo-small_PutCarrotOnPlateInScene-v1",
-            "octo-small_StackGreenCubeOnYellowCubeBakedTexInScene-v1",
-            "octo-small_PutEggplantInBasketScene-v1",
+            # "OpenVLA-7B-SFT-Simpler_PutSpoonOnTableClothInScene-v1",
+            "OpenVLA-7B-SFT-Simpler_PutCarrotOnPlateInScene-v1",
+            # "OpenVLA-7B-SFT-Simpler_StackGreenCubeOnYellowCubeBakedTexInScene-v1",
+            # "OpenVLA-7B-SFT-Simpler_PutEggplantInBasketScene-v1",
         ]
         self.pair_per_ep = 1
 
@@ -52,7 +52,7 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
         """Define data splits."""
         return {
             'train': self._generate_examples(0, 20),
-            'val': self._generate_examples(20, 3),
+            'val': self._generate_examples(20, 2),
         }
 
     def _generate_examples(self, start_ep, num_ep) -> Iterator[Tuple[str, Any]]:
@@ -96,6 +96,7 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             task_path = Path(self.path) / task
             eps = sorted(list(task_path.glob("*")))
             eps = eps[start_ep:start_ep + num_ep]
+            print(f"Task {task}: {len(eps)} episodes")
 
             for ep in eps:
                 files = sorted(list(ep.glob("*-success_1.npy")))
@@ -110,4 +111,4 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             sample = _parse_example(ep_path)
             yield ep_path, sample
 
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_sft_dataset
+# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_dpos_dataset

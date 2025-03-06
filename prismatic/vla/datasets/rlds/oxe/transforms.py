@@ -865,7 +865,10 @@ def maniskill_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
 
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
-    "grape_simpler_sft_dataset": grape_simpler_sft_dataset_transform,
+    "grape_simpler_sft_dataset_100": grape_simpler_sft_dataset_transform,
+    "grape_simpler_sft_dataset_268": grape_simpler_sft_dataset_transform,
+    "grape_simpler_dpos_dataset": grape_simpler_sft_dataset_transform,
+    "grape_simpler_dpof_dataset": grape_simpler_sft_dataset_transform,
     "bridge_oxe": bridge_oxe_dataset_transform,
     "bridge_orig": bridge_orig_dataset_transform,
     "bridge_dataset": bridge_orig_dataset_transform,

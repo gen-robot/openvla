@@ -52,12 +52,33 @@ class ActionEncoding(IntEnum):
 
 # === Individual Dataset Configs ===
 OXE_DATASET_CONFIGS = {
-    "grape_simpler_sft_dataset":{
+    "grape_simpler_sft_dataset_100":{
         "image_obs_keys": {"primary": "image"},
         "depth_obs_keys": {},
         "state_obs_keys": [],
-        "state_encoding": None,
-        "action_encoding": None,
+        "state_encoding": StateEncoding.NONE,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "grape_simpler_sft_dataset_268":{
+        "image_obs_keys": {"primary": "image"},
+        "depth_obs_keys": {},
+        "state_obs_keys": [],
+        "state_encoding": StateEncoding.NONE,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "grape_simpler_dpos_dataset":{
+        "image_obs_keys": {"primary": "image"},
+        "depth_obs_keys": {},
+        "state_obs_keys": [],
+        "state_encoding": StateEncoding.NONE,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "grape_simpler_dpof_dataset":{
+        "image_obs_keys": {"primary": "image"},
+        "depth_obs_keys": {},
+        "state_obs_keys": [],
+        "state_encoding": StateEncoding.NONE,
+        "action_encoding": ActionEncoding.EEF_POS,
     },
     "mani_skill_rlds_dataset": {
         "image_obs_keys": {"primary": "image_primary", "secondary": None, "wrist": None},
