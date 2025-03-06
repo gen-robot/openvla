@@ -25,6 +25,7 @@ dependencies:
   - xz=5.2.6=h166bdaf_0
   - zlib=1.2.13=hd590300_5
   - pip:
+      - --index-url https://pypi.tuna.tsinghua.edu.cn/simple
       - absl-py==1.4.0
       - anyio==3.7.1
       - apache-beam==2.49.0
