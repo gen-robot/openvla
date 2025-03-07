@@ -528,7 +528,7 @@ def flatshape(traj_a,traj_b):
 
 @draccus.wrap()
 def finetune(cfg: FinetuneConfig) -> None:
-    print(f"Fine-tuning OpenVLA Model `{cfg.vla_path}` on `{cfg.dataset_name}`")
+    print(f"Fine-tuning OpenVLA Model `{cfg.vla_path}` on `{cfg.dataset_s_name}` and `{cfg.dataset_f_name}`")
 
     # [Validate] Ensure GPU Available & Set Device / Distributed Context
     assert torch.cuda.is_available(), "Fine-tuning assumes at least one GPU is available!"
@@ -539,7 +539,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Configure Unique Experiment ID & Log Directory
     exp_id = (
-        f"{cfg.vla_path.split('/')[-1]}+{cfg.dataset_name}"
+        f"{cfg.vla_path.split('/')[-1]}+{cfg.dataset_s_name}"
         f"+b{cfg.batch_size * cfg.grad_accumulation_steps}"
         f"+lr-{cfg.learning_rate}"
     )
