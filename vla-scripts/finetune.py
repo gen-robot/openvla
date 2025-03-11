@@ -69,6 +69,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 class FinetuneConfig:
     # fmt: off
     vla_path: str = "openvla/openvla-7b"             # Path to OpenVLA model (on HuggingFace Hub or stored locally)
+    use_local_vla: bool = True
 
     # Dataset
     data_root_dir: Path = Path("datasets/rlds")      # Directory containing RLDS datasets
@@ -225,7 +226,7 @@ def count_parameters(module: nn.Module, name: str) -> None:
         None.
     """
     num_params = sum(p.numel() for p in module.parameters() if p.requires_grad)
-    print(f"# trainable params in {name}: {num_params}")
+    print(f"# trainable params in {name}: {num_params} | {num_params / 1e6}M")
 
 
 def init_module(
@@ -788,9 +789,26 @@ def finetune(cfg: FinetuneConfig) -> None:
     torch.cuda.set_device(device_id)
     torch.cuda.empty_cache()
 
+    # Get distributed training parameters from environment variables
+    # These are set by torchrun when launching the script
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", 1))
+    
+    print(f"Distributed training configuration:")
+    print(f"\tTotal number of nodes (WORLD_SIZE): {world_size}")
+    print(f"\tProcesses per node (LOCAL_WORLD_SIZE): {local_world_size}")
+    
+    # Calculate total number of GPUs being used
+    total_gpus = world_size
+    print(f"\tTotal number of GPUs: {total_gpus}")
+    
+    # Calculate effective batch size
+    effective_batch_size = cfg.batch_size * cfg.grad_accumulation_steps * total_gpus
+    print(f"\tEffective batch size: {effective_batch_size}")
+
     # Initialize wandb logging
     if distributed_state.is_main_process:
-        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"ft+{run_id}")
+        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"oft+g{world_size}tb{effective_batch_size}+{run_id}")
 
     # Print detected constants
     print(
@@ -810,7 +828,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     # the `modeling_prismatic.py` file in this codebase; if so, we will copy
     # the file to the downloaded or locally stored checkpoint directory so
     # that the user's changes to the VLA class logic go into effect
-    if model_is_on_hf_hub(cfg.vla_path):
+    if not cfg.use_local_vla and model_is_on_hf_hub(cfg.vla_path):
         # Download model directly from Hugging Face Hub
         vla_download_path = snapshot_download(repo_id=cfg.vla_path)
         # Overwrite VLA path
