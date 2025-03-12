@@ -71,6 +71,9 @@ class FinetuneConfig:
     vla_path: str = "openvla/openvla-7b"             # Path to OpenVLA model (on HuggingFace Hub or stored locally)
     use_local_vla: bool = True
 
+    window_size: Optional[int] = None                # If provided, uses a sliding window of this size to chunk the past observations and actions
+    future_action_window_size: Optional[int] = None  # If provided, uses a future action window of this size to chunk the future actions
+
     # Dataset
     data_root_dir: Path = Path("datasets/rlds")      # Directory containing RLDS datasets
     dataset_name: str = "aloha_scoop_x_into_bowl"    # Name of fine-tuning dataset (e.g., `aloha_scoop_x_into_bowl`)
@@ -174,9 +177,23 @@ def get_run_id(cfg) -> str:
         if cfg.use_lora:
             run_id += f"+lora-r{cfg.lora_rank}+dropout-{cfg.lora_dropout}"
         if cfg.image_aug:
-            run_id += "--image_aug"
+            run_id += "+image_aug"
         if cfg.run_id_note is not None:
-            run_id += f"--{cfg.run_id_note}"
+            run_id += f"+{cfg.run_id_note}"
+        if cfg.use_film:
+            run_id += "+film"
+        if cfg.use_proprio:
+            run_id += "+proprio"
+        if cfg.use_diffusion:
+            run_id += "+diffusion"
+        if cfg.use_l1_regression:
+            run_id += "+l1"
+        if cfg.num_images_in_input > 1:
+            run_id += f"+img-{cfg.num_images_in_input}"
+        if cfg.window_size is not None:
+            run_id += f"+ws-{cfg.window_size}"
+        if cfg.future_action_window_size is not None:
+            run_id += f"+fas-{cfg.future_action_window_size}"
     return run_id
 
 
@@ -779,10 +796,6 @@ def finetune(cfg: FinetuneConfig) -> None:
     # Get experiment run ID
     run_id = get_run_id(cfg)
 
-    # Create experiment run directory
-    run_dir = cfg.run_root_dir / run_id
-    os.makedirs(run_dir, exist_ok=True)
-
     # GPU setup
     distributed_state = PartialState()
     device_id = distributed_state.local_process_index
@@ -806,9 +819,15 @@ def finetune(cfg: FinetuneConfig) -> None:
     effective_batch_size = cfg.batch_size * cfg.grad_accumulation_steps * total_gpus
     print(f"\tEffective batch size: {effective_batch_size}")
 
+    run_id = f"oft+g{world_size}tb{effective_batch_size}+{run_id}"
+
+    # Create experiment run directory
+    run_dir = cfg.run_root_dir / run_id
+    os.makedirs(run_dir, exist_ok=True)
+
     # Initialize wandb logging
     if distributed_state.is_main_process:
-        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"oft+g{world_size}tb{effective_batch_size}+{run_id}")
+        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=run_id)
 
     # Print detected constants
     print(
@@ -1000,6 +1019,8 @@ def finetune(cfg: FinetuneConfig) -> None:
         resize_resolution=tuple(vla.module.config.image_sizes),
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
+        window_size=cfg.window_size,
+        future_action_window_size=cfg.future_action_window_size,
     )
     if cfg.use_val_set:
         val_dataset = RLDSDataset(
@@ -1010,6 +1031,8 @@ def finetune(cfg: FinetuneConfig) -> None:
             shuffle_buffer_size=cfg.shuffle_buffer_size // 10,
             image_aug=cfg.image_aug,
             train=False,
+            window_size=cfg.window_size,
+            future_action_window_size=cfg.future_action_window_size,
         )
 
     # [Important] Save dataset statistics so that we can unnormalize actions during inference
@@ -1055,7 +1078,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
             loss, metrics = run_forward_pass(
                 vla=vla,
-                action_head=action_head,
+                action_head=action_head if (cfg.use_diffusion or cfg.use_l1_regression) else None,
                 noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
                 proprio_projector=proprio_projector if cfg.use_proprio else None,
                 batch=batch,

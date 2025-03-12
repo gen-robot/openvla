@@ -7,7 +7,7 @@ format to OpenVLA, IterableDataset shim.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Tuple, Type
+from typing import Any, Dict, Tuple, Type, Optional
 
 import numpy as np
 import torch
@@ -101,6 +101,8 @@ class RLDSDataset(IterableDataset):
         shuffle_buffer_size: int = 256_000,
         train: bool = True,
         image_aug: bool = False,
+        window_size: Optional[int] = None,
+        future_action_window_size: Optional[int] = None,
     ) -> None:
         """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
         self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
@@ -127,10 +129,21 @@ class RLDSDataset(IterableDataset):
             load_language=True,
             action_proprio_normalization_type=ACTION_PROPRIO_NORMALIZATION_TYPE,
         )
+
+        if window_size is not None:
+            window_size = window_size
+        else:
+            window_size = 1
+
+        if future_action_window_size is not None:
+            future_action_window_size = future_action_window_size
+        else:
+            future_action_window_size = NUM_ACTIONS_CHUNK-1
+
         rlds_config = dict(
             traj_transform_kwargs=dict(
-                window_size=1,                                      # If we wanted to feed / predict more than one step
-                future_action_window_size=NUM_ACTIONS_CHUNK-1,      # For action chunking
+                window_size=window_size,                            # If we wanted to feed / predict more than one step
+                future_action_window_size=future_action_window_size,# For action chunking
                 skip_unlabeled=True,                                # Skip trajectories without language labels
                 goal_relabeling_strategy="uniform",                 # Goals are currently unused
             ),
@@ -146,6 +159,8 @@ class RLDSDataset(IterableDataset):
             traj_read_threads=len(mixture_spec),
             train=train,
         )
+
+        print("RLDS Config: ", rlds_config)
 
         # If applicable, enable image augmentations
         if image_aug:
