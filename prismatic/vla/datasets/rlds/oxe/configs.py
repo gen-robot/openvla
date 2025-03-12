@@ -52,6 +52,13 @@ class ActionEncoding(IntEnum):
 
 # === Individual Dataset Configs ===
 OXE_DATASET_CONFIGS = {
+    "panda_simpler_sft_dataset":{ # TODO to test the parameter whether is ok.
+        "image_obs_keys": {"primary": "image"},
+        "depth_obs_keys": {},
+        "state_obs_keys": [],
+        "state_encoding": StateEncoding.NONE,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
     "grape_simpler_sft_dataset_100":{
         "image_obs_keys": {"primary": "image"},
         "depth_obs_keys": {},

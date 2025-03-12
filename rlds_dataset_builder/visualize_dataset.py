@@ -15,7 +15,7 @@ WANDB_PROJECT = 'vis_rlds'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('dataset_name', help='name of the dataset to visualize')
-parser.add_argument('--dir', help='dir', default="../../datasets")
+parser.add_argument('--dir', help='dir', default="/nvme_data/bingwen/tensorflow_datasets/")
 args = parser.parse_args()
 
 if WANDB_ENTITY is not None:
@@ -61,6 +61,7 @@ action_mean = actions.mean(0)
 # state_mean = states.mean(0)
 
 print(f"action demo: {actions[0]}")
+print(f"action_mean demo: {action_mean}")
 
 def vis_stats(vector, vector_mean, tag):
     assert len(vector.shape) == 2
@@ -76,6 +77,9 @@ def vis_stats(vector, vector_mean, tag):
 
     if render_wandb:
         wandb.log({tag: wandb.Image(fig)})
+
+    plt.savefig('test', bbox_inches='tight') 
+    plt.close(fig)
 
 vis_stats(actions, action_mean, 'action_stats')
 # vis_stats(states, state_mean, 'state_stats')

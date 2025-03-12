@@ -863,8 +863,17 @@ def maniskill_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["qpos"] = trajectory["qpos"]
     return trajectory
 
+# TODO bingwen
+def panda_simpler_sft_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    panda simpler sft
+    """
+    # import pdb;pdb.set_trace()
+    return trajectory
+
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
+    "panda_simpler_sft_dataset": panda_simpler_sft_dataset_transform,
     "grape_simpler_sft_dataset_100": grape_simpler_sft_dataset_transform,
     "grape_simpler_sft_dataset_268": grape_simpler_sft_dataset_transform,
     "grape_simpler_dpos_dataset": grape_simpler_sft_dataset_transform,
