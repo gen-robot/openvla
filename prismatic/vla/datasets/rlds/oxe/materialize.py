@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from prismatic.overwatch import initialize_overwatch
+from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
 from prismatic.vla.datasets.rlds.oxe.configs import OXE_DATASET_CONFIGS, ActionEncoding
 from prismatic.vla.datasets.rlds.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
-from prismatic.vla.datasets.rlds.utils.data_utils import NormalizationType
 
 # Initialize Overwatch =>> Wraps `logging.Logger`
 overwatch = initialize_overwatch(__name__)
@@ -25,16 +25,17 @@ def make_oxe_dataset_kwargs(
     load_depth: bool = False,
     load_proprio: bool = True,
     load_language: bool = True,
-    action_proprio_normalization_type: NormalizationType = NormalizationType.NORMAL,
+    action_proprio_normalization_type = ACTION_PROPRIO_NORMALIZATION_TYPE,
 ) -> Dict[str, Any]:
     """Generates config (kwargs) for given dataset from Open-X Embodiment."""
     dataset_kwargs = deepcopy(OXE_DATASET_CONFIGS[dataset_name])
-    # FIXME: why???
-    if dataset_kwargs["action_encoding"] not in [ActionEncoding.EEF_POS, ActionEncoding.EEF_R6]:
+
+    if dataset_kwargs["action_encoding"] not in [ActionEncoding.EEF_POS, ActionEncoding.EEF_R6, ActionEncoding.JOINT_POS_BIMANUAL]:
         # raise ValueError(f"Cannot load `{dataset_name}`; only EEF_POS & EEF_R6 actions supported!")
         print("====================================")
         print(f"[WARNING] Cannot load `{dataset_name}`; only EEF_POS & EEF_R6 actions supported!")
         print("====================================")
+        import pdb; pdb.set_trace()
 
     # [Contract] For EEF_POS & EEF_R6 actions, only the last action dimension (gripper) is absolute!
     # Normalize all action dimensions *except* the gripper
@@ -47,9 +48,13 @@ def make_oxe_dataset_kwargs(
     elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS:
         dataset_kwargs["absolute_action_mask"] = [False] * 7 + [True]
         dataset_kwargs["action_normalization_mask"] = [True] * 7 + [False]
+    # elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS_BIMANUAL:
+    #     dataset_kwargs["absolute_action_mask"] = [False] * 6 + [True] + [False] * 6 + [True]
+    #     dataset_kwargs["action_normalization_mask"] = [True] * 6 + [False] + [True] * 6 + [False]
     elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS_BIMANUAL:
-        dataset_kwargs["absolute_action_mask"] = [False] * 6 + [True] + [False] * 6 + [True]
-        dataset_kwargs["action_normalization_mask"] = [True] * 6 + [False] + [True] * 6 + [False]
+        dataset_kwargs["absolute_action_mask"] = [True] * 14
+        dataset_kwargs["action_normalization_mask"] = [True] * 14
+
     dataset_kwargs["action_proprio_normalization_type"] = action_proprio_normalization_type
 
     # Adjust Loaded Camera Views
@@ -93,7 +98,7 @@ def get_oxe_dataset_kwargs_and_weights(
     load_depth: bool = False,
     load_proprio: bool = True,
     load_language: bool = True,
-    action_proprio_normalization_type: NormalizationType = NormalizationType.NORMAL,
+    action_proprio_normalization_type = ACTION_PROPRIO_NORMALIZATION_TYPE,
 ) -> Tuple[Dict[str, Any], List[float]]:
     """
     Generates dataset kwargs for a given dataset mix from the Open X-Embodiment dataset. The returned kwargs
