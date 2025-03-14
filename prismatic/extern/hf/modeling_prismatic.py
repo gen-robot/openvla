@@ -731,11 +731,18 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         # Compute vocab size for de-tokenization -- revert added "multiple of"
         self.vocab_size = self.config.text_config.vocab_size - self.config.pad_to_multiple_of
 
+        self.action_chunk = NUM_ACTIONS_CHUNK
+        self.action_dim = ACTION_DIM
+
+    def set_output_format(self, action_chunk, action_dim):
+        self.action_chunk = action_chunk
+        self.action_dim = action_dim
+
     def _prepare_input_for_action_prediction(self, input_ids, attention_mask):
         """Prepares input for action prediction by adding necessary tokens"""
         # Add (ACTION_DIM * NUM_ACTIONS_CHUNK) placeholder tokens to input_ids to simulate action tokens
         placeholder_action_token_ids = (
-            torch.ones((input_ids.shape[0], ACTION_DIM * NUM_ACTIONS_CHUNK)).to(input_ids.device).to(input_ids.dtype)
+            torch.ones((input_ids.shape[0], self.action_dim * self.action_chunk)).to(input_ids.device).to(input_ids.dtype)
         )
         input_ids = torch.cat([input_ids, placeholder_action_token_ids], dim=-1)
 
@@ -863,7 +870,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
             last_hidden_states = language_model_output.hidden_states[-1]  # (B, seq_len, D)
             actions_hidden_states = last_hidden_states[
                 :,
-                NUM_PATCHES + NUM_PROMPT_TOKENS : NUM_PATCHES + NUM_PROMPT_TOKENS + ACTION_DIM * NUM_ACTIONS_CHUNK,
+                NUM_PATCHES + NUM_PROMPT_TOKENS : NUM_PATCHES + NUM_PROMPT_TOKENS + self.action_dim * self.action_chunk,
                 :,
             ]  # (B, act_chunk_len, D)
 
@@ -871,7 +878,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
             noise_pred = action_head.predict_noise(actions_hidden_states)
             curr_noisy_actions = action_head.noise_scheduler.step(noise_pred, t, curr_noisy_actions).prev_sample
 
-        curr_noisy_actions = curr_noisy_actions.reshape(NUM_ACTIONS_CHUNK, ACTION_DIM)
+        curr_noisy_actions = curr_noisy_actions.reshape(self.action_chunk, self.action_dim)
 
         # Return final actions
         return curr_noisy_actions.float().cpu().detach().numpy(), actions_hidden_states
@@ -915,7 +922,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         last_hidden_states = language_model_output.hidden_states[-1]  # (B, seq_len, D)
         actions_hidden_states = last_hidden_states[
             :,
-            NUM_PATCHES + NUM_PROMPT_TOKENS : NUM_PATCHES + NUM_PROMPT_TOKENS + ACTION_DIM * NUM_ACTIONS_CHUNK,
+            NUM_PATCHES + NUM_PROMPT_TOKENS : NUM_PATCHES + NUM_PROMPT_TOKENS + self.action_dim * self.action_chunk,
             :,
         ]  # (B, act_chunk_len, D)
 
@@ -923,14 +930,14 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         if action_head is not None:
             # L1 regression prediction
             normalized_actions = action_head.predict_action(actions_hidden_states)
-            normalized_actions = normalized_actions.reshape(NUM_ACTIONS_CHUNK, ACTION_DIM)
+            normalized_actions = normalized_actions.reshape(self.action_chunk, self.action_dim)
             normalized_actions = normalized_actions.float().cpu().detach().numpy()
         else:
             # Discrete token-based prediction
             predicted_action_token_ids = (
                 language_model_output.logits[
                     :,
-                    NUM_PATCHES + NUM_PROMPT_TOKENS : NUM_PATCHES + NUM_PROMPT_TOKENS + ACTION_DIM * NUM_ACTIONS_CHUNK,
+                    NUM_PATCHES + NUM_PROMPT_TOKENS : NUM_PATCHES + NUM_PROMPT_TOKENS + self.action_dim * self.action_chunk,
                 ]
                 .argmax(dim=2)
                 .cpu()
@@ -939,7 +946,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
             discretized_actions = self.vocab_size - predicted_action_token_ids
             discretized_actions = np.clip(discretized_actions - 1, a_min=0, a_max=self.bin_centers.shape[0] - 1)
             normalized_actions = self.bin_centers[discretized_actions]
-            normalized_actions = normalized_actions.reshape(NUM_ACTIONS_CHUNK, ACTION_DIM)
+            normalized_actions = normalized_actions.reshape(self.action_chunk, self.action_dim)
 
         return normalized_actions, actions_hidden_states
 
@@ -1025,7 +1032,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         if use_diffusion:
             # Sample random noise with shape equal to output action, used as the starting state for reverse diffusion
             noise = torch.randn(
-                size=(1, NUM_ACTIONS_CHUNK, ACTION_DIM), device=input_embeddings.device, dtype=input_embeddings.dtype
+                size=(1, self.action_chunk, self.action_dim), device=input_embeddings.device, dtype=input_embeddings.dtype
             )
 
             # Run diffusion-based prediction

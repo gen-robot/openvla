@@ -8,6 +8,7 @@ import json
 import logging
 import numpy as np
 import traceback
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
@@ -41,7 +42,7 @@ MODEL_IMAGE_SIZES = {
     # Add other models as needed
 }
 
-def get_openvla_prompt(instruction: str, openvla_path: Union[str, Path]) -> str:
+def get_openvla_prompt(instruction: str) -> str:
     return f"In: What action should the robot take to {instruction.lower()}?\nOut:"
 
 
@@ -89,8 +90,14 @@ def profile(cfg: OpenVLAConfig) -> None:
 
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
-    processor = get_processor(cfg)
+    # Convert relative checkpoint path to absolute path
+    if cfg.pretrained_checkpoint:
+        assert os.path.exists(cfg.pretrained_checkpoint), f"Wrong path: {cfg.pretrained_checkpoint}"
+        cfg.pretrained_checkpoint = os.path.abspath(cfg.pretrained_checkpoint)
+        print(f"Using absolute checkpoint path: {cfg.pretrained_checkpoint}")
+
     vla = get_vla(cfg)
+    processor = get_processor(cfg)
 
     resize_size = get_image_resize_size(cfg) # openvla's image size is 224x224
 
@@ -111,9 +118,11 @@ def profile(cfg: OpenVLAConfig) -> None:
         prompt = get_openvla_prompt(INSTRUCTION)
        
         def create_random_image(size: tuple[int, int]) -> Image.Image:
-            return Image.fromarray(np.asarray(np.random.rand(*size) * 255, dtype=np.uint8))
+            return np.asarray(np.random.rand(*size) * 255, dtype=np.uint8)
 
         all_images = [create_random_image((224, 224, 3)) for _ in range(cfg.num_images_in_input)]
+
+        t0 = time.time()
         prepared_images = prepare_images_for_vla(all_images, cfg)
 
         # process primary image
@@ -129,6 +138,8 @@ def profile(cfg: OpenVLAConfig) -> None:
             primary_pixel_values = inputs["pixel_values"]
             all_wrist_pixel_values = [wrist_inputs["pixel_values"] for wrist_inputs in all_wrist_inputs]
             inputs["pixel_values"] = torch.cat([primary_pixel_values] + all_wrist_pixel_values, dim=1)
+
+        
 
         # process proprioception data if used
         proprio = None
@@ -154,6 +165,24 @@ def profile(cfg: OpenVLAConfig) -> None:
 
         effective_action = [action[i] for i in range(min(len(action), cfg.num_open_loop_steps))]
 
+        # Simulate applying actions to a real robot
+        for i, act in enumerate(effective_action):
+            # Simulate robot execution time (e.g., 100ms per action)
+            robot_execution_time = 0.05  # 100ms
+            time.sleep(robot_execution_time)
+            
+            # Print action being applied (optional)
+            print(f"Applied action {i+1}/{len(effective_action)}: {act.shape}")
+        
+        # Record total time including robot execution
+        total_time += time.time() - t0
+        
+    # Calculate and print average time
+    avg_time = total_time / 10
+    print(f"Average execution time (including simulated robot actions): {avg_time:.4f} seconds")
+    print(f"Average time per action: {avg_time / len(effective_action):.4f} seconds")
+    # print the max GPU memory allocated
+    print(f"Max GPU memory allocated: {torch.cuda.max_memory_allocated() / 1024**2:.2f} MB")
 
 if __name__ == "__main__":
     profile()
