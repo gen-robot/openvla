@@ -267,7 +267,7 @@ def get_vla(cfg: Any) -> torch.nn.Module:
     # actually go into effect
     # If loading a pretrained checkpoint from Hugging Face Hub, we just assume that the policy
     # will be used as is, with its original modeling logic
-    if not model_is_on_hf_hub(cfg.pretrained_checkpoint):
+    if cfg.use_local_vla or not model_is_on_hf_hub(cfg.pretrained_checkpoint):
         # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
         AutoConfig.register("openvla", OpenVLAConfig)
         AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
@@ -295,6 +295,13 @@ def get_vla(cfg: Any) -> torch.nn.Module:
 
     # Set number of images in model input
     vla.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
+
+    if cfg.use_parallel_decoding:
+        llm_model = vla.language_model
+        print("Current attention implementation inside {}: {}".format(
+            llm_model.__class__.__name__, llm_model.model._attn_implementation))
+        assert llm_model.model._attn_implementation == "sdpa", "Only SDPA attention is supported for parallel decoding!"
+        llm_model.model.enable_parallel_decoding()
 
     vla.eval()
 

@@ -81,6 +81,7 @@ class FinetuneConfig:
     shuffle_buffer_size: int = 100_000               # Dataloader shuffle buffer size (can reduce if OOM errors occur)
 
     # Algorithm and architecture
+    use_parallel_decoding: bool = True               # If True, uses parallel decoding inside LLaMa model's sdpa attention, i.e., replacing causal mask with bidirectional mask
     use_l1_regression: bool = True                   # If True, trains continuous action head with L1 regression objective
     use_diffusion: bool = False                      # If True, trains continuous action head with diffusion modeling objective (DDIM)
     num_diffusion_steps: int = 50                    # (When `diffusion==True`) Number of diffusion steps for training
@@ -898,15 +899,23 @@ def finetune(cfg: FinetuneConfig) -> None:
         # Important: For this, must specify `vla.model.vision_backbone` instead of just `vla.vision_backbone`, since the
         # latter would cause the new wrapped backbone to be saved as a new attribute of `vla` instead of overwriting the
         # original one (due to the LoRA wrapper)
-        vla.model.vision_backbone = FiLMedPrismaticVisionBackbone(
-            vision_backbone=vla.model.vision_backbone,
+        vla_model = vla.model if cfg.use_lora else vla
+        vla_model.vision_backbone = FiLMedPrismaticVisionBackbone(
+            vision_backbone=vla_model.vision_backbone,
             llm_dim=vla.llm_dim,
         )
         count_parameters(vla.vision_backbone, "vla.vision_backbone (post-wrap)")
         if cfg.resume:
             state_dict = load_checkpoint("vision_backbone", cfg.vla_path, cfg.resume_step)
-            vla.model.vision_backbone.load_state_dict(state_dict)
-        vla.model.vision_backbone = vla.model.vision_backbone.to(device_id)
+            vla_model.vision_backbone.load_state_dict(state_dict)
+        vla_model.vision_backbone = vla_model.vision_backbone.to(device_id)
+
+    if cfg.use_parallel_decoding:
+        llm_model = vla.model.language_model if cfg.use_lora else vla.language_model
+        print("Current attention implementation inside {}: {}".format(
+            llm_model.__class__.__name__, llm_model.model._attn_implementation))
+        assert llm_model.model._attn_implementation == "sdpa", "Only SDPA attention is supported for parallel decoding!"
+        llm_model.model.enable_parallel_decoding()
 
     # Wrap VLA with DDP
     vla = wrap_ddp(vla, device_id, find_unused=True)
