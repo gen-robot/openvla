@@ -16,7 +16,7 @@ import tensorflow as tf
 import torch
 from huggingface_hub import HfApi, hf_hub_download
 from PIL import Image
-from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
+from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
 
 # Apply JSON numpy patch for serialization
 json_numpy.patch()
@@ -277,6 +277,14 @@ def get_vla(cfg: Any) -> torch.nn.Module:
         # Update config.json and sync model files
         update_auto_map(cfg.pretrained_checkpoint)
         check_model_logic_mismatch(cfg.pretrained_checkpoint)
+
+    if cfg.load_in_4bit or cfg.load_in_8bit:
+        bits_and_bytes_config = BitsAndBytesConfig(
+            load_in_4bit=cfg.load_in_4bit,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+    else:
+        bits_and_bytes_config = dict()
 
     # Load the model
     vla = AutoModelForVision2Seq.from_pretrained(

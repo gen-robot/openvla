@@ -355,6 +355,7 @@ def run_forward_pass(
             noisy_actions=noisy_actions if use_diffusion else None,
             noisy_action_projector=noisy_action_projector if use_diffusion else None,
             diffusion_timestep_embeddings=diffusion_timestep_embeddings if use_diffusion else None,
+            history_dict=batch["history"] if "history" in batch else None,
             use_film=use_film,
         )
 
@@ -1020,6 +1021,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         prompt_builder_fn=PurePromptBuilder,
         use_wrist_image=use_wrist_image,
         use_proprio=cfg.use_proprio,
+        history_size=0, #cfg.window_size - 1 if cfg.window_size is not None else 0
     )
     train_dataset = RLDSDataset(
         cfg.data_root_dir,

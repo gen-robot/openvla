@@ -143,6 +143,16 @@ class PaddedCollatorForActionPrediction:
         else:
             proprio = None
 
+        if "history" in instances[0]:
+            history_len = instances[0]["history"]["length"]
+            history_pixel_values = torch.stack([instance["history"]["pixel_values"] for instance in instances])
+            if "proprio" in instances[0]["history"]:
+                history_proprio = torch.Tensor(np.squeeze(np.stack([instance["history"]["proprio"] for instance in instances])))
+                history_dict = {"length": history_len, "pixel_values": history_pixel_values, "proprio": history_proprio}
+            else:
+                history_dict = {"length": history_len, "pixel_values": history_pixel_values}
+            # history_actions = torch.stack([instance["history"]["actions"] for instance in instances])
+
         output = dict(
             pixel_values=pixel_values,
             proprio=proprio,
@@ -150,6 +160,7 @@ class PaddedCollatorForActionPrediction:
             attention_mask=attention_mask,
             labels=labels,
             actions=actions,
+            history=history_dict,
         )
         if dataset_names is not None:
             output["dataset_names"] = dataset_names

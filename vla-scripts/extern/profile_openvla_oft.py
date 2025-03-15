@@ -73,7 +73,7 @@ class OpenVLAConfig:
     use_relative_actions: bool = False               # Whether to use relative actions (delta joint angles)
 
     load_in_8bit: bool = False                       # (For OpenVLA only) Load with 8-bit quantization
-    load_in_4bit: bool = False                       # (For OpenVLA only) Load with 4-bit quantization
+    load_in_4bit: bool = True                       # (For OpenVLA only) Load with 4-bit quantization
 
     #################################################################################################################
     # Utils
@@ -138,8 +138,6 @@ def profile(cfg: OpenVLAConfig) -> None:
             primary_pixel_values = inputs["pixel_values"]
             all_wrist_pixel_values = [wrist_inputs["pixel_values"] for wrist_inputs in all_wrist_inputs]
             inputs["pixel_values"] = torch.cat([primary_pixel_values] + all_wrist_pixel_values, dim=1)
-
-        
 
         # process proprioception data if used
         proprio = None

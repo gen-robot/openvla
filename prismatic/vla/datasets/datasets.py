@@ -32,13 +32,14 @@ class RLDSBatchTransform:
     predict_stop_token: bool = True
     use_wrist_image: bool = False
     use_proprio: bool = False
+    history_size: int = 0
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
-        dataset_name, current_action = rlds_batch["dataset_name"], rlds_batch["action"][0]
-        img = Image.fromarray(rlds_batch["observation"]["image_primary"][0])
+        dataset_name, current_action = rlds_batch["dataset_name"], rlds_batch["action"][self.history_size]
+        img = Image.fromarray(rlds_batch["observation"]["image_primary"][self.history_size])
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
-        actions = rlds_batch["action"]
+        actions = rlds_batch["action"][self.history_size:]
 
         # Construct Chat-based Prompt =>> Input is default query + language instruction, output are the action tokens
         prompt_builder = self.prompt_builder_fn("openvla")
@@ -73,8 +74,13 @@ class RLDSBatchTransform:
         if not self.predict_stop_token:
             labels[-1] = IGNORE_INDEX
 
-        return_dict = dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, dataset_name=dataset_name, actions=actions)
-
+        return_dict = dict(
+            pixel_values=pixel_values,
+            input_ids=input_ids,
+            labels=labels,
+            dataset_name=dataset_name,
+            actions=actions,
+        )
         # Add additional inputs
         if self.use_wrist_image:
             all_wrist_pixels = []
@@ -85,9 +91,18 @@ class RLDSBatchTransform:
                     all_wrist_pixels.append(pixel_values_wrist)
             return_dict["pixel_values_wrist"] = torch.cat(all_wrist_pixels, dim=0)
         if self.use_proprio and "proprio" in rlds_batch["observation"]:
-            proprio = rlds_batch["observation"]["proprio"]
+            proprio = rlds_batch["observation"]["proprio"][self.history_size:self.history_size+1]
             return_dict["proprio"] = proprio
-
+        if self.history_size > 0:
+            return_dict["history"] = dict()
+            return_dict["history"]["length"] = self.history_size
+            return_dict["history"]["pixel_values"] = []
+            for t in range(self.history_size):
+                _pixel_values = self.image_transform(Image.fromarray(rlds_batch["observation"]["image_primary"][t]))
+                return_dict["history"]["pixel_values"].append(_pixel_values)
+            return_dict["history"]["pixel_values"] = torch.stack(return_dict["history"]["pixel_values"])
+            return_dict["history"]["action"] = rlds_batch["action"][:self.history_size]
+            return_dict["history"]["proprio"] = rlds_batch["observation"]["proprio"][:self.history_size]
         return return_dict
 
 

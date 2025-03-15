@@ -25,7 +25,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
   --run_root_dir checkpoints/debug/${task_name} \
   --use_proprio False \
   --use_film False \
-  --num_images_in_input 1 \
+  --num_images_in_input 3 \
   --lora_rank 32 \
   --batch_size 1 \
   --grad_accumulation_steps 1 \
@@ -35,7 +35,8 @@ torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/finetune.py \
   --wandb_entity fengg \
   --max_steps 60_000 \
   --merge_lora_during_training True \
-  --use_l1_regression False
+  --use_l1_regression False \
+  --window_size 3
 
 exit 0
 

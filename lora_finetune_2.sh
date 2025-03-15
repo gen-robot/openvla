@@ -36,7 +36,10 @@ torchrun --standalone --nnodes 1 --nproc-per-node 8 vla-scripts/finetune.py \
   --wandb_project OpenVLA-SFT \
   --wandb_entity fengg \
   --max_steps 200_000 \
-  --merge_lora_during_training False
+  --merge_lora_during_training False \
+  --use_l1_regression False \
+  --use_diffusion True
+  # --window_size 3
 
 # OFT: PD + AC + diffusion + wrist + proprio + film
 # torchrun --standalone --nnodes 1 --nproc-per-node 4 vla-scripts/finetune.py \

@@ -241,7 +241,7 @@ class FiLMedPrismaticVisionBackbone(nn.Module):
         # For FiLM: Average the language embeddings of the task description
         average_language_embedding = language_embeddings.mean(dim=1)
 
-        if self.get_num_images_in_input() == 1:
+        if self.get_num_images_in_input() == 1 or pixel_values.shape[1] == 6:
             if not self.vision_backbone.use_fused_vision_backbone:
                 return self.vision_backbone.featurizer(pixel_values, average_language_embedding)
 

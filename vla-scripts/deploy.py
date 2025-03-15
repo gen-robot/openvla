@@ -101,7 +101,7 @@ class OpenVLAServer:
             )
             return "error"
 
-    def run(self, host: str = "0.0.0.0", port: int = 8777) -> None:
+    def run(self, host: str = "0.0.0.0", port: int = 8000) -> None:
         self.app = FastAPI()
         self.app.post("/act")(self.get_server_action)
         uvicorn.run(self.app, host=host, port=port)
@@ -113,14 +113,16 @@ class DeployConfig:
 
     # Server Configuration
     host: str = "0.0.0.0"                                               # Host IP Address
-    port: int = 8777                                                    # Host Port
+    port: int = 8000                                                    # Host Port
 
     #################################################################################################################
     # Model-specific parameters
     #################################################################################################################
     model_family: str = "openvla"                    # Model family
     pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
+    use_local_vla: bool = True                       # If True, uses local VLA model
 
+    use_parallel_decoding: bool = True               # If True, uses parallel decoding
     use_l1_regression: bool = True                   # If True, uses continuous action head with L1 regression objective
     use_diffusion: bool = False                      # If True, uses continuous action head with diffusion modeling objective (DDIM)
     num_diffusion_steps: int = 50                    # (When `diffusion==True`) Number of diffusion steps for inference

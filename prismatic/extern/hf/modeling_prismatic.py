@@ -458,6 +458,23 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             return torch.cat((projected_patch_embeddings, proprio_features), dim=1)
         return projected_patch_embeddings
 
+    def _process_history_features(self, projected_patch_embeddings, history_dict, language_embeddings=None, use_film=False, proprio_projector=None):
+        """Process history features and append to vision features"""
+        history_patch_embeddings = []
+        if history_dict["proprio"].ndim == 3:  # (bsz, T, proprio_dim)
+            history_proprio = history_dict["proprio"]
+        else:  # (bsz, proprio_dim)
+            history_proprio = history_dict["proprio"].unsqueeze(dim=0)
+        for t in range(history_dict["length"]):
+            patch_embeddings = self._process_vision_features(
+                history_dict["pixel_values"][:, t], language_embeddings, use_film)  # (bsz, num_patches, llm_dim)
+            patch_embeddings = self._process_proprio_features(
+                patch_embeddings, history_proprio[:, t], proprio_projector)  # (bsz, num_patches + 1, llm_dim)
+            history_patch_embeddings.append(patch_embeddings) 
+        
+        history_patch_embeddings = torch.cat(history_patch_embeddings, dim=1)
+        return torch.cat((history_patch_embeddings, projected_patch_embeddings), dim=1)
+
     def _build_multimodal_attention(self, input_embeddings, projected_patch_embeddings, attention_mask):
         """Build multimodal embeddings and attention mask"""
         # Update attention mask
@@ -514,6 +531,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         noisy_actions=None,
         noisy_action_projector=None,
         diffusion_timestep_embeddings=None,
+        history_dict=None,
         use_film: bool = False,
     ) -> Union[Tuple, PrismaticCausalLMOutputWithPast]:
         """Run a forward pass through the VLM, returning a PrismaticCausalLMOutputWithPast instance."""
@@ -596,6 +614,10 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                 projected_patch_embeddings = torch.cat(
                     (projected_patch_embeddings, diffusion_timestep_embeddings), dim=1
                 )
+
+            if history_dict is not None:
+                projected_patch_embeddings = self._process_history_features(
+                    projected_patch_embeddings, history_dict, language_embeddings, use_film, proprio_projector)
 
             # Process action embeddings
             if noisy_actions is not None:
