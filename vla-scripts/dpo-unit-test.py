@@ -34,10 +34,11 @@ from prismatic.vla.action_tokenizer import ActionTokenizer
 import wandb
 from prismatic.models.backbones.llm.prompting import PurePromptBuilder, VicunaV15ChatPromptBuilder
 from datasets import disable_caching
+import copy
 disable_caching()
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-WINDOWS_SIZE = 8
+WINDOWS_SIZE = 16
 
 @dataclass
 class RLDSBatchTransform:
@@ -387,7 +388,6 @@ def transform(processor,data):
     tokenizer=processor.tokenizer
     instruction=str(data['instruction'])[2:-1]
     lang=f"In: What action should the robot take to {instruction}?\nOut: {action_description}</s>"
-    # lang=f"In: What action should the robot take to {instruction.lower()}?\nOut:"
     input_ids = tokenizer(lang, add_special_tokens=True).input_ids
     labels = list(input_ids)
     img=data['image']
@@ -532,7 +532,7 @@ class FinetuneConfig:
     shuffle_buffer_size: int = 100000                           # Dataloader shuffle buffer size (can reduce if OOM)
     epoch: int = 10
     # LoRA Arguments
-    use_lora: bool = True                                           # Whether to use LoRA fine-tuning
+    use_lora: bool = False                                           # Whether to use LoRA fine-tuning
     lora_rank: int = 32                                             # Rank of LoRA weight matrix
     lora_dropout: float = 0.0                                       # Dropout applied to LoRA weights
     sample_chunk: bool = False                                      # Whether to sample chunks for training          
@@ -564,12 +564,6 @@ def flatshape(traj_a,traj_b):
 
 @draccus.wrap()
 def finetune(cfg: FinetuneConfig) -> None:
-
-    if cfg.use_lora:
-        WINDOWS_SIZE = 8
-    else:
-        WINDOWS_SIZE = 4
-
     print(f"Fine-tuning OpenVLA Model `{cfg.vla_path}` on `{cfg.dataset_name}`")
 
     # [Validate] Ensure GPU Available & Set Device / Distributed Context
@@ -720,25 +714,6 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     collator=basic_collate_fn
 
-    # # Wrap dataset by Dataloader
-    # dataloader_chosen=DataLoader(
-    #     traj_dataset_success,
-    #     batch_size=1,
-    #     sampler=None, # RandomSampler(traj_dataset_success),
-    #     collate_fn=collator,
-    #     num_workers=0,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
-    # )
-    # dataloader_rejected=DataLoader(
-    #     traj_dataset_fail,
-    #     batch_size=1,
-    #     sampler=None, #RandomSampler(traj_dataset_fail),
-    #     collate_fn=collator,
-    #     num_workers=0,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
-    # )
-
-    # Initialize Logging =>> W&B
-    wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=f"ft+{exp_id}")
-
     # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
     recent_losses = deque(maxlen=cfg.grad_accumulation_steps)
     recent_acc=deque(maxlen=cfg.grad_accumulation_steps)
@@ -767,30 +742,21 @@ def finetune(cfg: FinetuneConfig) -> None:
         chosen_reject_map.append(idx)
 
     all_data_index = []
-    data_num = min(20, len(traj_dataset_success))
-    for i in tqdm.tqdm(range(data_num)):
+    for i in tqdm.tqdm(range(len(traj_dataset_success))):
         chosen_batch = traj_dataset_success[i]
         rejected_batch = traj_dataset_fail[chosen_reject_map[i]]
         traj_num = min(len(window_batch_single(chosen_batch)), len(window_batch_single(rejected_batch)))
         for j in range(traj_num):
             all_data_index.append((i,j))
 
-    cfg.epoch = 1
-
-    if cfg.use_lora:
-        print(f"Saving Model Checkpoint init model")
-        directory_name="init_check"
-        
-        # If LoRA, we first save adapter weights, then merge into full model; otherwise, default save!
-        save_dir = f"{adapter_dir}/{directory_name}" if cfg.use_lora else run_dir
-        os.makedirs(save_dir, exist_ok=True)
-        # Save Processor & Weights
-        processor.save_pretrained(run_dir)
-        if hasattr(vla, "module"):
-            vla.module.save_pretrained(save_dir)
-        else:
-            vla.save_pretrained(save_dir)
-        # dist.barrier()
+    DATASET_STATS = {'state_min': [-0.7463043928146362, -0.0801204964518547, -0.4976441562175751, -2.657780647277832, -0.5742632150650024, 1.8309762477874756, -2.2423808574676514, 0.0, 0.0], 
+                 'state_max': [0.7645499110221863, 1.4967026710510254, 0.4650936424732208, -0.3866899907588959, 0.5505855679512024, 3.2900545597076416, 2.5737812519073486, 0.03999999910593033, 0.03999999910593033], 
+                 'action_min': [-0.7472005486488342, -0.08631071448326111, -0.4995281398296356, -2.658363103866577, -0.5751323103904724, 1.8290787935256958, -2.245187997817993, -1.0], 
+                 'action_max': [0.7654682397842407, 1.4984270334243774, 0.46786263585090637, -0.38181185722351074, 0.5517147779464722, 3.291581630706787, 2.575840711593628, 1.0], 
+                 'action_std': [0.2199309915304184, 0.18780815601348877, 0.13044124841690063, 0.30669933557510376, 0.1340624988079071, 0.24968451261520386, 0.9589747190475464, 0.9827960729598999], 
+                 'action_mean': [-0.00885344110429287, 0.5523102879524231, -0.007564723491668701, -2.0108158588409424, 0.004714342765510082, 2.615924596786499, 0.08461848646402359, -0.19301606714725494]}
+    action_min = np.array(DATASET_STATS["action_min"], dtype=np.float32).reshape(1, -1)
+    action_max = np.array(DATASET_STATS["action_max"], dtype=np.float32).reshape(1, -1)
 
     # Train!
     with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
@@ -808,7 +774,6 @@ def finetune(cfg: FinetuneConfig) -> None:
                 batch_chosen = window_batch_single(traj_dataset_success[all_data_index[batch_idx][0]])
                 batch_rejected = window_batch_single(traj_dataset_fail[chosen_reject_map[all_data_index[batch_idx][0]]])
                 
-                optimizer.zero_grad()
                 batch_chosen_list=list(batch_chosen)
                 batch_rejected_list=list(batch_rejected)
 
@@ -828,70 +793,37 @@ def finetune(cfg: FinetuneConfig) -> None:
                 logps_rejected=0
                 traj_count+=1
                 loss_sum=0
-                optimizer.zero_grad()
                 # Calculate traj-loss in each batch
                 for step in range(WINDOWS_SIZE): 
 
                     data_chosen=batch_chosen_list[traj_idx][step]
                     data_rejected=batch_rejected_list[traj_idx][step]  
+                    print("??Actionc:", data_chosen["action"])
+
+                    with torch.no_grad():
+                        data_real = copy.deepcopy(data_chosen)
+                        prompt = f"In: What action should the robot take to {data_chosen['instruction'][2:-1]}?\nOut:"
+                        img = np.array(data_chosen["image"])
+                        # inputs_all = transform(processor,data_real)
+                        # inputs=dict(pixel_values=inputs_all["pixel_values"].to(vla.device, dtype=torch.bfloat16), 
+                        #             input_ids=inputs_all["input_ids"].to(vla.device),
+                        #             attention_mask=inputs_all["attention_mask"].to(vla.device, dtype=torch.bfloat16))
+                        inputs = processor(prompt, Image.fromarray(img).convert("RGB")).to(vla.device, dtype=torch.bfloat16)
+                        print("inputs:", inputs)
+                        actions = vla_ref.predict_action(**inputs, unnorm_key="mani_skill_rlds_dataset", do_sample=True)
+                        data_real["action"] = actions #(actions + 1) / 2 * (action_max - action_min) + action_min
+                        print("??Actionr:", data_real["action"])
+
+                    print("data_chosen:", data_chosen)
 
                     data_chosen=transform(processor,data_chosen)
+                    data_real=transform(processor,data_real)
                     data_rejected=transform(processor,data_rejected)
 
                     with torch.autocast("cuda", dtype=torch.bfloat16):
-                        # Calculate chosen_policy likelihood
-                        output_chosen_policy: CausalLMOutputWithPast = vla(
-                            input_ids=data_chosen["input_ids"].to(device),
-                            attention_mask=data_chosen["attention_mask"].to(device),
-                            pixel_values=data_chosen["pixel_values"].to(torch.bfloat16).to(device),
-                            labels=data_chosen["labels"].to(device),
-                        )
-                        labels=data_chosen["labels"]
-                        labels=labels.to(device)
-                        logits=output_chosen_policy.logits
-                        #project patch labels in language labels
-                        projected_patch_labels = torch.full(
-                            (labels.shape[0], 256),
-                            fill_value=-100,
-                            dtype=labels.dtype,
-                            device=device,
-                        )
-
-                        multimodal_labels = torch.cat([labels[:, :1], projected_patch_labels, labels[:, 1:]], dim=1)
-                        policy_chosen_logps, size_completion = get_batch_logps(
-                            logits,
-                            multimodal_labels,
-                            is_encoder_decoder=False,
-                            label_pad_token_id=-100,
-                        ) 
-                        # Calculate rejected_policy likelihood
-                        output_rejected_policy: CausalLMOutputWithPast = vla(
-                            input_ids=data_rejected["input_ids"].to(device),
-                            attention_mask=data_rejected["attention_mask"].to(device),
-                            pixel_values=data_rejected["pixel_values"].to(torch.bfloat16).to(device),
-                            labels=data_rejected["labels"].to(device),
-                        )
-                        labels=data_rejected["labels"]
-                        labels=labels.to(device)
-                        logits=output_rejected_policy.logits
-                        projected_patch_labels = torch.full(
-                            (labels.shape[0], 256),
-                            fill_value=-100,
-                            dtype=labels.dtype,
-                            device=device,
-                        )
-        
-                        multimodal_labels = torch.cat([labels[:, :1], projected_patch_labels, labels[:, 1:]], dim=1)
-                        policy_rejected_logps, size_completion = get_batch_logps(
-                            logits,
-                            multimodal_labels,
-                            is_encoder_decoder=False,
-                            label_pad_token_id=-100,
-                        )
-
                         with torch.no_grad():
-                            # Calculate chosen_reference likelihood
-                            output_chosen_ref: CausalLMOutputWithPast = vla_ref(
+                            # Calculate chosen_policy likelihood
+                            output_chosen_policy: CausalLMOutputWithPast = vla(
                                 input_ids=data_chosen["input_ids"].to(device),
                                 attention_mask=data_chosen["attention_mask"].to(device),
                                 pixel_values=data_chosen["pixel_values"].to(torch.bfloat16).to(device),
@@ -899,24 +831,53 @@ def finetune(cfg: FinetuneConfig) -> None:
                             )
                             labels=data_chosen["labels"]
                             labels=labels.to(device)
-                
-                            logits=output_chosen_ref.logits
+                            logits=output_chosen_policy.logits
                             projected_patch_labels = torch.full(
                                 (labels.shape[0], 256),
                                 fill_value=-100,
                                 dtype=labels.dtype,
                                 device=device,
                             )
-                    
+
+                            print("???:", labels, logits)
+
                             multimodal_labels = torch.cat([labels[:, :1], projected_patch_labels, labels[:, 1:]], dim=1)
-                            ref_chosen_logps, size_completion = get_batch_logps(
+                            policy_chosen_logps, size_completion = get_batch_logps(
                                 logits,
                                 multimodal_labels,
                                 is_encoder_decoder=False,
                                 label_pad_token_id=-100,
-                            )      
-                            # Calculate rejected_reference likelihood
-                            output_rejected_ref: CausalLMOutputWithPast = vla_ref(
+                            )  
+                            print("Chosen logits:", policy_chosen_logps)
+                            
+                            # Calculate chosen_policy likelihood
+                            output_real_policy: CausalLMOutputWithPast = vla(
+                                input_ids=data_real["input_ids"].to(device),
+                                attention_mask=data_real["attention_mask"].to(device),
+                                pixel_values=data_real["pixel_values"].to(torch.bfloat16).to(device),
+                                labels=data_real["labels"].to(device),
+                            )
+                            labels=data_real["labels"]
+                            labels=labels.to(device)
+                            logits=output_real_policy.logits
+                            projected_patch_labels = torch.full(
+                                (labels.shape[0], 256),
+                                fill_value=-100,
+                                dtype=labels.dtype,
+                                device=device,
+                            )
+
+                            multimodal_labels = torch.cat([labels[:, :1], projected_patch_labels, labels[:, 1:]], dim=1)
+                            policy_real_logps, size_completion = get_batch_logps(
+                                logits,
+                                multimodal_labels,
+                                is_encoder_decoder=False,
+                                label_pad_token_id=-100,
+                            )  
+                            print("Real logits:", policy_real_logps)
+
+                            # Calculate rejected_policy likelihood
+                            output_rejected_policy: CausalLMOutputWithPast = vla(
                                 input_ids=data_rejected["input_ids"].to(device),
                                 attention_mask=data_rejected["attention_mask"].to(device),
                                 pixel_values=data_rejected["pixel_values"].to(torch.bfloat16).to(device),
@@ -924,85 +885,25 @@ def finetune(cfg: FinetuneConfig) -> None:
                             )
                             labels=data_rejected["labels"]
                             labels=labels.to(device)
-
-                            logits=output_rejected_ref.logits
+                            logits=output_rejected_policy.logits
                             projected_patch_labels = torch.full(
                                 (labels.shape[0], 256),
                                 fill_value=-100,
                                 dtype=labels.dtype,
                                 device=device,
                             )
-
+            
                             multimodal_labels = torch.cat([labels[:, :1], projected_patch_labels, labels[:, 1:]], dim=1)
-                            ref_rejected_logps, size_completion = get_batch_logps(
+                            policy_rejected_logps, size_completion = get_batch_logps(
                                 logits,
                                 multimodal_labels,
                                 is_encoder_decoder=False,
                                 label_pad_token_id=-100,
-                            )                                        
-                        losses, chosen_rewards, rejected_rewards = dpo_loss(
-                            policy_chosen_logps,
-                            policy_rejected_logps,
-                            ref_chosen_logps,
-                            ref_rejected_logps,
-                            device_id=device
-                        )
-                        #Calculate loss of this step 
-                        loss_step=0.1*(policy_chosen_logps-policy_rejected_logps-ref_chosen_logps+ref_rejected_logps)
-                        loss_sum+=loss_step
-                        logps_chosen+=policy_chosen_logps
-                        logps_rejected+=policy_rejected_logps
-                        chosen_rewards_sum+=chosen_rewards
-                        rejected_rewards_sum+=rejected_rewards
-                        
-                        
-            # Normalize loss to account for gradient accumulation
-                loss_sum = -F.logsigmoid(loss_sum)
-                chosen_rewards = chosen_rewards_sum / WINDOWS_SIZE
-                rejected_rewards = rejected_rewards_sum / WINDOWS_SIZE
-                logps_chosen /= WINDOWS_SIZE
-                logps_rejected /= WINDOWS_SIZE
-                normalized_loss = loss_sum / cfg.grad_accumulation_steps
-                # Backward pass
-                normalized_loss.backward()
+                            )
+                            print("Rejected logits:", policy_rejected_logps)
+                
+                exit(0)
 
-                reward_accuracies = (chosen_rewards > rejected_rewards).float()
-                # # # Store recent train metrics
-                recent_losses.append(loss_sum.item())
-                reward_accuracies = (chosen_rewards > rejected_rewards).float()
-                recent_acc.append(reward_accuracies)
-                gradient_step_idx = traj_count // cfg.grad_accumulation_steps
-
-                smoothened_loss = sum(recent_losses) / len(recent_losses)
-                reward_accuracies=sum(recent_acc)/len(recent_acc)
-                # # Push Metrics to W&B (every 10 gradient steps)
-                reward_margins=chosen_rewards - rejected_rewards
-                if gradient_step_idx % 1==0:    
-                    wandb.log(
-                        {"train_loss": smoothened_loss,"chosen_rewards": chosen_rewards,"reject_rewards": rejected_rewards, "reward_acc":reward_accuracies,"reward_margins":reward_margins,"logps_rejected":logps_rejected,"logps_chosen":logps_chosen}, step=gradient_step_idx
-                    )
-
-                # Optimizer Step
-                if (traj_count + 1) % cfg.grad_accumulation_steps == 0:
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    progress.update()
-
-                # Save Model Checkpoint =>> by default, only keeps the latest checkpoint, continually overwriting it!
-                if (gradient_step_idx > 0 and gradient_step_idx % 200 == 1) or batch_idx == len(all_data_index) - 1:
-                    print(f"Saving Model Checkpoint for Step {gradient_step_idx}")
-                    directory_name="d1121_check"
-                    
-                    # If LoRA, we first save adapter weights, then merge into full model; otherwise, default save!
-                    save_dir = f"{adapter_dir}/{directory_name}" if cfg.use_lora else run_dir
-                    os.makedirs(save_dir, exist_ok=True)
-                    # Save Processor & Weights
-                    processor.save_pretrained(run_dir)
-                    if hasattr(vla, "module"):
-                        vla.module.save_pretrained(save_dir)
-                    else:
-                        vla.save_pretrained(save_dir)
-                    # dist.barrier()
 
 
 if __name__ == "__main__":

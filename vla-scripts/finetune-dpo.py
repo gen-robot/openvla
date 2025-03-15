@@ -528,7 +528,7 @@ class FinetuneConfig:
     save_steps: int = 5000                                          # Interval for checkpoint saving
     learning_rate: float = 2e-5                                     # Fine-tuning learning rate
     grad_accumulation_steps: int = 1                                # Gradient accumulation steps
-    image_aug: bool = True                                          # Whether to train with image augmentations
+    image_aug: bool = False                                          # Whether to train with image augmentations
     shuffle_buffer_size: int = 100000                           # Dataloader shuffle buffer size (can reduce if OOM)
     epoch: int = 10
     # LoRA Arguments
@@ -716,10 +716,33 @@ def finetune(cfg: FinetuneConfig) -> None:
     recent_losses = deque(maxlen=cfg.grad_accumulation_steps)
     recent_acc=deque(maxlen=cfg.grad_accumulation_steps)
     
-    all_data_index = []
+    chosen_first_image = []
+    reject_first_image = []
     for i in tqdm.tqdm(range(len(traj_dataset_success))):
         chosen_batch = traj_dataset_success[i]
         rejected_batch = traj_dataset_fail[i]
+        batch_chosen = window_batch_single(chosen_batch)
+        batch_rejected = window_batch_single(rejected_batch)
+        chosen_first_image.append(np.array(batch_chosen[0][0]["image"]))
+        reject_first_image.append(np.array(batch_rejected[0][0]["image"]))
+    
+    chosen_reject_map = []
+    for i in tqdm.tqdm(range(len(traj_dataset_success))):
+        idx = -1
+        min_value = 1000000000
+        for j in range(len(traj_dataset_fail)):
+            chosen_image = chosen_first_image[i]
+            reject_image = reject_first_image[j]
+            diff_value = np.sum(np.abs(chosen_image - reject_image))
+            if diff_value < min_value:
+                min_value = diff_value
+                idx = j
+        chosen_reject_map.append(idx)
+
+    all_data_index = []
+    for i in tqdm.tqdm(range(len(traj_dataset_success))):
+        chosen_batch = traj_dataset_success[i]
+        rejected_batch = traj_dataset_fail[chosen_reject_map[i]]
         traj_num = min(len(window_batch_single(chosen_batch)), len(window_batch_single(rejected_batch)))
         for j in range(traj_num):
             all_data_index.append((i,j))
@@ -735,7 +758,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             for batch_idx in tqdm.tqdm(range(len(all_data_index))):
                 
                 batch_chosen = window_batch_single(traj_dataset_success[all_data_index[batch_idx][0]])
-                batch_rejected = window_batch_single(traj_dataset_fail[all_data_index[batch_idx][0]])
+                batch_rejected = window_batch_single(traj_dataset_fail[chosen_reject_map[all_data_index[batch_idx][0]]])
                 
                 optimizer.zero_grad()
                 batch_chosen_list=list(batch_chosen)

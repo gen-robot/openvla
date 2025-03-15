@@ -69,6 +69,7 @@ DATASET_STATS = {'state_min': np.array([-0.7463043928146362, -0.0801204964518547
 
 
 TASK2LANG = {
+    "StackCube-v1":  "Pick up a red cube and stack it on top of a green cube and let go of the cube without it falling.",
     "StackCube-v1-1":  "Pick up a red cube and stack it on top of a green cube and let go of the cube without it falling.",
     "StackCube-v1-2":  "Pick up a red cube and stack it on top of a green cube and let go of the cube without it falling.",
     "StackCube-v1-3":  "Pick up a red cube and stack it on top of a green cube and let go of the cube without it falling.",
@@ -173,7 +174,7 @@ class ManiSkillRldsDataset(tfds.core.GeneratorBasedBuilder):
                 for traj_idx, traj in enumerate(trajs):
                     if task == 'PegInsertionSide-v1' and traj_idx > 400:
                         break
-                    if traj_idx % 10 != 9:
+                    if task != "StackCube-v1" and traj_idx % 10 != 0:
                         continue
                     yield _parse_example(f[traj], task_dir, traj_idx, lang)
 
