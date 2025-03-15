@@ -868,7 +868,6 @@ def panda_simpler_sft_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str,
     """
     panda simpler sft
     """
-    # import pdb;pdb.set_trace()
     return trajectory
 
 # === Registry ===

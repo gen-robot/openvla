@@ -10,20 +10,21 @@ from simpler_env import SIMPLER_ROOT_DIR
 class PandaSimplerSftDataset(tfds.core.GeneratorBasedBuilder): # PandaSimplerSftDataset
     """DatasetBuilder for example dataset."""
 
-    VERSION = tfds.core.Version('1.0.0')
+    VERSION = tfds.core.Version('5.0.0')
     RELEASE_NOTES = {
-        '1.0.0': 'only contain 3 kinds of task, instead of put egg plant in basket.',
+        '5.0.0': '3 tasks contains 300 trajetories',
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.path = SIMPLER_ROOT_DIR+"/videos/datasets_mp"
+        self.path = SIMPLER_ROOT_DIR+"/videos/"
         self.tasks = [
-            # "PandaPutSpoonOnTableClothInScene-v1",
-            # "PandaPutCarrotOnPlateInScene-v1",
-            "PandaStackGreenCubeOnYellowCubeBakedTexInScene-v1/20250312_112000/data",
+            "scp/PandaPutCarrotOnPlateInScene-v1/20250312_212359/data",
+            "scp/PandaPutSpoonOnTableClothInScene-v1/20250312_213531/data",
+            "scp/PandaStackGreenCubeOnYellowCubeBakedTexInScene-v1/20250312_214605/data",
             # "PandaPutEggplantInBasketScene-v1",
         ]
+        assert len(self.tasks)==3, "task_num is false."
 
     def _info(self) -> tfds.core.DatasetInfo:
         """Dataset metadata (homepage, citation,...)."""
@@ -52,8 +53,8 @@ class PandaSimplerSftDataset(tfds.core.GeneratorBasedBuilder): # PandaSimplerSft
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(2, spare=1), # TODO to change the number of episodes
-            'val': self._generate_examples(1, start=2),
+            'train': self._generate_examples(90, spare=10),
+            'val': self._generate_examples(10, start=90),
         }
 
     def _generate_examples(self, num_ep, spare=0, start=0) -> Iterator[Tuple[str, Any]]:
@@ -71,10 +72,10 @@ class PandaSimplerSftDataset(tfds.core.GeneratorBasedBuilder): # PandaSimplerSft
                         'image': np.asarray(data["image"][i]),
                     },
                     'action': data["action"][i],
-                    'language_instruction': data['instruction'][0], # Here differnt from jijia.
+                    'language_instruction': data['instruction'][0],
                 })
 
-                if data["info"][i]["success"]:
+                if data["info"][i]["success"][0]: # fix the bug by bingwen
                     success_count += 1
                 else:
                     success_count = 0
