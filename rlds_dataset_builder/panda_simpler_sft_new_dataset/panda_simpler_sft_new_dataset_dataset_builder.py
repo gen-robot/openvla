@@ -7,27 +7,23 @@ import tensorflow_datasets as tfds
 from simpler_env import SIMPLER_ROOT_DIR
 
 
-class PandaSimplerSftDataset(tfds.core.GeneratorBasedBuilder): # PandaSimplerSftDataset
+class PandaSimplerSftNewDataset(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for example dataset."""
 
-    VERSION = tfds.core.Version('7.0.0')
+    VERSION = tfds.core.Version('1.0.0')
     RELEASE_NOTES = {
-        '7.0.0': """totally contains 1200 trajectories of carrot and spoon and cube 
-                    -> scp/PandaPutCarrotOnPlateInScene-v1/20250315_155225/data + 
-                    -> scp/PandaPutSpoonOnTableClothInScene-v1/20250315_164241/data +
-                    -> scp/PandaStackGreenCubeOnYellowCubeBakedTexInScene-v1/20250315_141915/data """,
+        '1.0.0': """only stack cube 200 traj with new collection""",
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.path = SIMPLER_ROOT_DIR+"/videos/"
         self.tasks = [
-            "scp/PandaPutCarrotOnPlateInScene-v1/20250315_155225/data",  # 
-            "scp/PandaPutSpoonOnTableClothInScene-v1/20250315_164241/data", # 20250312_213531
-            "scp/PandaStackGreenCubeOnYellowCubeBakedTexInScene-v1/20250315_141915/data", # 20250312_214605
-            # "PandaPutEggplantInBasketScene-v1",
+            "scp/PandaStackGreenCubeOnYellowCubeBakedTexInScene-v1/20250316_150739/data",
+            # "scp/PandaPutSpoonOnTableClothInScene-v1/20250316_151313/data",
+            # "scp/PandaPutCarrotOnPlateInScene-v1/20250316_152846/data",
         ]
-        assert len(self.tasks)==3, "task_num is false."
+        # assert len(self.tasks)==3, "task_num is false."
 
     def _info(self) -> tfds.core.DatasetInfo:
         """Dataset metadata (homepage, citation,...)."""
@@ -56,8 +52,8 @@ class PandaSimplerSftDataset(tfds.core.GeneratorBasedBuilder): # PandaSimplerSft
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(360, spare=40),
-            'val': self._generate_examples(40, start=360),
+            'train': self._generate_examples(180, spare=20),
+            'val': self._generate_examples(20, start=180),
         }
 
     def _generate_examples(self, num_ep, spare=0, start=0) -> Iterator[Tuple[str, Any]]:
@@ -129,6 +125,3 @@ class PandaSimplerSftDataset(tfds.core.GeneratorBasedBuilder): # PandaSimplerSft
         #         beam.Create(episode_paths)
         #         | beam.Map(_parse_example)
         # )
-
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_sft_dataset_100
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_sft_dataset_268
