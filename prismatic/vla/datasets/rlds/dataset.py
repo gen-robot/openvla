@@ -247,7 +247,7 @@ def make_dataset_from_rlds(
         ),
         num_parallel_calls,
     )
-
+    dataset.data_dir = builder.data_dir
     return dataset, dataset_statistics
 
 
@@ -510,6 +510,7 @@ def make_interleaved_dataset(
         _, dataset_statistics = make_dataset_from_rlds(**data_kwargs, train=train)
         dataset_sizes.append(dataset_statistics["num_transitions"])
         all_dataset_statistics[dataset_kwargs["name"]] = dataset_statistics
+        all_dataset_statistics[dataset_kwargs["name"]]["data_dir"] = _.data_dir
 
     # Get the indices of the "primary" datasets (i.e., datasets with sample_weight == 1.0)
     primary_dataset_indices = np.array([idx for idx in range(len(sample_weights)) if sample_weights[idx] == 1.0])

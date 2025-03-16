@@ -248,7 +248,8 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Initialize Logging =>> W&B
     if distributed_state.is_main_process:
-        name = f"{cfg.dataset_name}-{exp_id}"
+        version = Path(vla_dataset.dataset_statistics[cfg.dataset_name]["data_dir"]).name
+        name = f"{cfg.dataset_name}-v{version}-{exp_id}-bs_{cfg.batch_size}-gasteps_{cfg.grad_accumulation_steps}"
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=name)
 
     # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
