@@ -152,6 +152,8 @@ class PaddedCollatorForActionPrediction:
             else:
                 history_dict = {"length": history_len, "pixel_values": history_pixel_values}
             # history_actions = torch.stack([instance["history"]["actions"] for instance in instances])
+        else:
+            history_dict = None
 
         output = dict(
             pixel_values=pixel_values,
@@ -160,8 +162,9 @@ class PaddedCollatorForActionPrediction:
             attention_mask=attention_mask,
             labels=labels,
             actions=actions,
-            history=history_dict,
         )
         if dataset_names is not None:
             output["dataset_names"] = dataset_names
+        if history_dict is not None:
+            output["history"] = history_dict
         return output

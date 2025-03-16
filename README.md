@@ -1,5 +1,23 @@
 # Fine-Tuning Vision-Language-Action Models: Optimizing Speed and Success
 
+---
+
+## Python environment
+
+```
+torch 2.2.0, torchvision 0.17.0, transformers 4.40.1 (from our forked repo), tokenizers 0.19.1, timm 0.9.10, and flash-attn 2.6.2
+```
+
+You can run `pip install -e .` to install the dependencies required for this repo inside the `openvla` directory.
+
+:warning::warning::warning: Make sure that you have installed the `transformers` from our forked repo otherwise the attention implementation will be incorrect (no parallel decoding). It can also be manually installed by running:
+
+```
+pip install transformers @ git+https://github.com/gen-robot/transformers.git@openvla
+```
+
+---
+
 **Project website: https://openvla-oft.github.io/**
 
 **Paper: https://arxiv.org/abs/2502.19645**

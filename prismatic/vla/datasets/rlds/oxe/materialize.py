@@ -30,7 +30,9 @@ def make_oxe_dataset_kwargs(
     """Generates config (kwargs) for given dataset from Open-X Embodiment."""
     dataset_kwargs = deepcopy(OXE_DATASET_CONFIGS[dataset_name])
 
-    if dataset_kwargs["action_encoding"] not in [ActionEncoding.EEF_POS, ActionEncoding.EEF_R6, ActionEncoding.JOINT_POS_BIMANUAL]:
+    if dataset_kwargs["action_encoding"] not in [
+        ActionEncoding.EEF_POS, ActionEncoding.EEF_R6, ActionEncoding.JOINT_POS, ActionEncoding.JOINT_POS_BIMANUAL
+    ]:
         # raise ValueError(f"Cannot load `{dataset_name}`; only EEF_POS & EEF_R6 actions supported!")
         print("====================================")
         print(f"[WARNING] Cannot load `{dataset_name}`; only EEF_POS & EEF_R6 actions supported!")
@@ -46,8 +48,8 @@ def make_oxe_dataset_kwargs(
         dataset_kwargs["absolute_action_mask"] = [False] * 9 + [True]
         dataset_kwargs["action_normalization_mask"] = [True] * 9 + [False]
     elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS:
-        dataset_kwargs["absolute_action_mask"] = [False] * 7 + [True]
-        dataset_kwargs["action_normalization_mask"] = [True] * 7 + [False]
+        dataset_kwargs["absolute_action_mask"] = [True] * 8
+        dataset_kwargs["action_normalization_mask"] = [True] * 8
     # elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS_BIMANUAL:
     #     dataset_kwargs["absolute_action_mask"] = [False] * 6 + [True] + [False] * 6 + [True]
     #     dataset_kwargs["action_normalization_mask"] = [True] * 6 + [False] + [True] * 6 + [False]
