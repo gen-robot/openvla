@@ -1,7 +1,7 @@
-task_name="cobot_wipe_the_board"
+task_name="mani_skill_rlds_dataset"
 use_film=False                      # if True, it will inject the language instruction into the visual encoder via FiLM
 use_proprio=True                    # if True, it will use the proprioceptive sensor data, which would be useful for L1 regression or diffusion head
-num_images_in_input=3               # the number of images in the input. if you want to use wrist images, set it to 3 or whatever you want.
+num_images_in_input=1               # the number of images in the input. if you want to use wrist images, set it to 3 or whatever you want.
 ####
 # if use_l1_regression and use_diffusion are both False, 
 # it will use the original discrete action head. 
@@ -10,13 +10,13 @@ num_images_in_input=3               # the number of images in the input. if you 
 use_l1_regression=True              # if True, it will use the L1 regression head
 use_diffusion=False                 # if True, it will use the diffusion head
 merge_lora_during_training=False    # if True, it will merge the LoRA weights during training, which will slightly increase the GPU memory usage
-# chunk_size=25                       # the number of actions to be predicted
+num_actions_chunk=64                # the number of actions to be predicted
 use_parallel_decoding=True          # if you use a large chunk_size, make sure you have enabled parallel decoding in the model to increase the throughput
-num_gpus=7
+num_gpus=1
 
 torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
   --vla_path "openvla/openvla-7b" \
-  --data_root_dir datasets/cot_cobot_data_rlds \
+  --data_root_dir datasets \
   --dataset_name ${task_name} \
   --run_root_dir checkpoints/${task_name} \
   --use_proprio ${use_proprio} \
@@ -32,5 +32,5 @@ torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetu
   --merge_lora_during_training ${merge_lora_during_training} \
   --use_l1_regression ${use_l1_regression} \
   --use_diffusion ${use_diffusion} \
+  --num_actions_chunk ${num_actions_chunk} \
   --use_parallel_decoding ${use_parallel_decoding}
-  # --future_action_window_size ${chunk_size} \

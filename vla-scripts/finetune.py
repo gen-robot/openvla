@@ -72,7 +72,7 @@ class FinetuneConfig:
     use_local_vla: bool = True
 
     window_size: Optional[int] = None                # If provided, uses a sliding window of this size to chunk the past observations and actions
-    action_chunk_size: Optional[int] = None          # If provided, uses a action chunk of this size to chunk the future actions
+    num_actions_chunk: Optional[int] = None          # If provided, uses a action chunk of this size to chunk the future actions
     # future_action_window_size: Optional[int] = None  # If provided, uses a future action window of this size to chunk the future actions
 
     # Dataset
@@ -122,6 +122,7 @@ class FinetuneConfig:
     run_id_note: Optional[str] = None                # Extra note to add to end of run ID for logging
     run_id_override: Optional[str] = None            # Optional string to override the run ID with
     wandb_log_freq: int = 10                         # WandB logging frequency in steps
+    is_debug: bool = False                           # If True, runs in debug mode, disables wandb logging
 
     # fmt: on
 
@@ -301,6 +302,7 @@ def run_forward_pass(
     num_patches,
     compute_diffusion_l1=False,
     num_diffusion_steps=None,
+    num_actions_chunk=NUM_ACTIONS_CHUNK,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Compute model forward pass and metrics for both training and validation.
@@ -398,10 +400,10 @@ def run_forward_pass(
         text_hidden_states = last_hidden_states[:, num_patches:-1]
         # Get hidden states for action portion of response
         batch_size = batch["input_ids"].shape[0]
-
+        import pdb; pdb.set_trace()
         actions_hidden_states = (
             text_hidden_states[current_action_mask | next_actions_mask]
-            .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
+            .reshape(batch_size, num_actions_chunk * ACTION_DIM, -1)
             .to(torch.bfloat16)
         )  # (B, act_chunk_len, D)
 
@@ -435,6 +437,7 @@ def run_forward_pass(
                         next_actions_mask=next_actions_mask,
                         use_proprio=use_proprio,
                         use_film=use_film,
+                        num_actions_chunk=num_actions_chunk,
                     )
 
         metrics.update(
@@ -477,6 +480,7 @@ def run_diffusion_sampling(
     next_actions_mask,
     use_proprio,
     use_film,
+    num_actions_chunk,
 ) -> torch.Tensor:
     """
     Run diffusion sampling (reverse diffusion) to generate actions.
@@ -495,13 +499,13 @@ def run_diffusion_sampling(
         next_actions_mask (torch.Tensor): Mask for next actions.
         use_proprio (bool): Whether to use proprioceptive state as input.
         use_film (bool): Whether to use FiLM for better language following.
-
+        num_actions_chunk (int): Number of actions in the chunk.
     Returns:
         torch.Tensor: Predicted actions.
     """
     # Sample random noisy action, used as the starting point for reverse diffusion
     noise = torch.randn(
-        size=(batch_size, NUM_ACTIONS_CHUNK, ACTION_DIM),
+        size=(batch_size, num_actions_chunk, ACTION_DIM),
         device=device_id,
         dtype=torch.bfloat16,
     )  # (B, chunk_len, action_dim)
@@ -540,7 +544,7 @@ def run_diffusion_sampling(
             text_hidden_states = last_hidden_states[:, num_patches:-1]
             # Get hidden states for action portion of response
             actions_hidden_states = text_hidden_states[current_action_mask | next_actions_mask].reshape(
-                batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1
+                batch_size, num_actions_chunk * ACTION_DIM, -1
             )  # (B, act_chunk_len, D)
             actions_hidden_states = actions_hidden_states.to(torch.bfloat16)
             # Predict noise
@@ -797,14 +801,15 @@ def finetune(cfg: FinetuneConfig) -> None:
     cfg.vla_path = cfg.vla_path.rstrip("/")
     print(f"Fine-tuning OpenVLA Model `{cfg.vla_path}` on `{cfg.dataset_name}`")
 
-    if cfg.action_chunk_size is not None:
-        cfg.future_action_window_size = cfg.action_chunk_size - 1
-        NUM_ACTIONS_CHUNK = cfg.action_chunk_size
+    if cfg.num_actions_chunk is not None:
+        cfg.future_action_window_size = cfg.num_actions_chunk - 1
+        num_actions_chunk = cfg.num_actions_chunk
     else:
         cfg.future_action_window_size = None
+        num_actions_chunk = NUM_ACTIONS_CHUNK
 
     # Get experiment run ID
-    run_id = get_run_id(cfg)
+    run_id = get_run_id(cfg) if not cfg.is_debug else "debug"
 
     # GPU setup
     distributed_state = PartialState()
@@ -836,16 +841,18 @@ def finetune(cfg: FinetuneConfig) -> None:
     os.makedirs(run_dir, exist_ok=True)
 
     # Initialize wandb logging
-    if distributed_state.is_main_process:
+    if distributed_state.is_main_process and not cfg.is_debug:
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=run_id)
 
     # Print detected constants
     print(
+        f"{'='*50}\n"
         "Detected constants:\n"
-        f"\tNUM_ACTIONS_CHUNK: {NUM_ACTIONS_CHUNK}\n"
+        f"\tNUM_ACTIONS_CHUNK: {num_actions_chunk}\n"
         f"\tACTION_DIM: {ACTION_DIM}\n"
         f"\tPROPRIO_DIM: {PROPRIO_DIM}\n"
-        f"\tACTION_PROPRIO_NORMALIZATION_TYPE: {ACTION_PROPRIO_NORMALIZATION_TYPE}"
+        f"\tACTION_PROPRIO_NORMALIZATION_TYPE: {ACTION_PROPRIO_NORMALIZATION_TYPE}\n"
+        f"{'='*50}\n"
     )
 
     # Two options:
@@ -950,7 +957,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 "input_dim": vla.module.llm_dim,
                 "hidden_dim": vla.module.llm_dim,
                 "action_dim": ACTION_DIM,
-                "num_actions_chunk": NUM_ACTIONS_CHUNK,
+                "num_actions_chunk": num_actions_chunk,
             },
             to_bf16=True,
         )
@@ -966,7 +973,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 "input_dim": vla.module.llm_dim,
                 "hidden_dim": vla.module.llm_dim,
                 "action_dim": ACTION_DIM,
-                "num_actions_chunk": NUM_ACTIONS_CHUNK,
+                "num_actions_chunk": num_actions_chunk,
                 "num_diffusion_steps": cfg.num_diffusion_steps,
             },
             to_bf16=True,
@@ -1116,6 +1123,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 num_patches=NUM_PATCHES,
                 compute_diffusion_l1=compute_diffusion_l1,
                 num_diffusion_steps=cfg.num_diffusion_steps if cfg.use_diffusion else None,
+                num_actions_chunk=num_actions_chunk,
             )
 
             # Normalize loss to account for gradient accumulation
