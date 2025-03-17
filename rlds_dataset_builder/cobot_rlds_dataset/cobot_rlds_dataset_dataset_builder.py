@@ -147,7 +147,8 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
             sample = {
                 'steps': episode,
                 'episode_metadata': {
-                    'file_path': episode_path
+                    'file_path': episode_path,
+                    'episode_id': episode_path.split('/')[-1].split('_')[-1].split('.')[0],
                 }
             }
 

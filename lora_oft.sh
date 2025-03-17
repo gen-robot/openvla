@@ -1,4 +1,4 @@
-task_name="mani_skill_rlds_dataset"
+task_name="bridge_dataset"
 use_film=False                      # if True, it will inject the language instruction into the visual encoder via FiLM
 use_proprio=True                    # if True, it will use the proprioceptive sensor data, which would be useful for L1 regression or diffusion head
 num_images_in_input=1               # the number of images in the input. if you want to use wrist images, set it to 3 or whatever you want.
@@ -10,7 +10,7 @@ num_images_in_input=1               # the number of images in the input. if you 
 use_l1_regression=True              # if True, it will use the L1 regression head
 use_diffusion=False                 # if True, it will use the diffusion head
 merge_lora_during_training=False    # if True, it will merge the LoRA weights during training, which will slightly increase the GPU memory usage
-num_actions_chunk=64                # the number of actions to be predicted
+# num_actions_chunk=25                # the number of actions to be predicted
 use_parallel_decoding=True          # if you use a large chunk_size, make sure you have enabled parallel decoding in the model to increase the throughput
 num_gpus=1
 
@@ -32,5 +32,6 @@ torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetu
   --merge_lora_during_training ${merge_lora_during_training} \
   --use_l1_regression ${use_l1_regression} \
   --use_diffusion ${use_diffusion} \
-  --num_actions_chunk ${num_actions_chunk} \
-  --use_parallel_decoding ${use_parallel_decoding}
+  --use_parallel_decoding ${use_parallel_decoding} \
+  --is_debug True
+  # --num_actions_chunk ${num_actions_chunk} \

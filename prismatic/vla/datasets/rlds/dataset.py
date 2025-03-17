@@ -7,6 +7,8 @@ Core interface script for configuring and initializing RLDS datasets.
 import copy
 import inspect
 import json
+import os
+import shutil
 from functools import partial
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
@@ -14,12 +16,23 @@ import dlimp as dl
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
+from huggingface_hub import hf_hub_download
 
 from prismatic.overwatch import initialize_overwatch
-from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
+from prismatic.vla.constants import (
+    ACTION_DIM,
+    ACTION_PROPRIO_NORMALIZATION_TYPE,
+    ACTION_TOKEN_BEGIN_IDX,
+    IGNORE_INDEX,
+    NUM_ACTIONS_CHUNK,
+    PROPRIO_DIM,
+    STOP_INDEX,
+)
+from prismatic.util.cot_utils import get_cot_database_keys, get_cot_tags_list, make_tf_hash_table
 from prismatic.vla.datasets.rlds import obs_transforms, traj_transforms
 from prismatic.vla.datasets.rlds.utils import goal_relabeling, task_augmentation
 from prismatic.vla.datasets.rlds.utils.data_utils import (
+    NormalizationType,
     allocate_threads,
     get_dataset_statistics,
     normalize_action_and_proprio,
@@ -47,12 +60,13 @@ def make_dataset_from_rlds(
     depth_obs_keys: Dict[str, Optional[str]] = {},
     state_obs_keys: List[Optional[str]] = (),
     language_key: Optional[str] = None,
-    action_proprio_normalization_type: ACTION_PROPRIO_NORMALIZATION_TYPE,
+    action_proprio_normalization_type: NormalizationType = ACTION_PROPRIO_NORMALIZATION_TYPE,
     dataset_statistics: Optional[Union[dict, str]] = None,
     absolute_action_mask: Optional[List[bool]] = None,
     action_normalization_mask: Optional[List[bool]] = None,
     num_parallel_reads: int = tf.data.AUTOTUNE,
     num_parallel_calls: int = tf.data.AUTOTUNE,
+    reasoning_dataset_path: str = "~/.cache/reasonings_dataset.json",
 ) -> Tuple[dl.DLataset, dict]:
     """
     This function is responsible for loading a specific RLDS dataset from storage and getting it into a standardized
@@ -128,6 +142,24 @@ def make_dataset_from_rlds(
     if language_key is not None:
         REQUIRED_KEYS.add(language_key)
 
+    if os.path.isfile(reasoning_dataset_path):
+        print(f"Loading from local checkpoint path `{reasoning_dataset_path}`.")
+    else:
+        print(f"Dataset file `{reasoning_dataset_path}` not found, loading from HF.")
+
+        download_path = hf_hub_download(
+            repo_id="Embodied-CoT/embodied_features_bridge",
+            filename="embodied_features_bridge.json",
+            repo_type="dataset",
+        )
+
+        shutil.copyfile(download_path, reasoning_dataset_path)
+
+    with open(reasoning_dataset_path, "r") as f:
+        reasoning_dataset = json.load(f)
+
+    reasoning_dataset = make_tf_hash_table(reasoning_dataset)
+
     def restructure(traj):
         # apply a standardization function, if provided
         if standardize_fn is not None:
@@ -179,11 +211,20 @@ def make_dataset_from_rlds(
                 )
             task["language_instruction"] = traj.pop(language_key)
 
+        file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
+        episode_id = traj["traj_metadata"]["episode_metadata"]["episode_id"][0]
+
+        file_names = tf.repeat(file_name, traj_len)
+        episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
+        indices = tf.as_string(tf.range(traj_len))
+        reasonings = reasoning_dataset.lookup(file_names + "_" + episode_ids + "_" + indices)
+
         traj = {
             "observation": new_obs,
             "task": task,
             "action": tf.cast(traj["action"], tf.float32),
             "dataset_name": tf.repeat(name, traj_len),
+            "reasoning": reasonings,
         }
 
         if absolute_action_mask is not None:
@@ -231,6 +272,9 @@ def make_dataset_from_rlds(
         dataset_statistics["action"]["mask"] = np.array(action_normalization_mask)
 
     # construct the dataset
+    # if "val" not in builder.info.splits:
+    #     split = "train[:95%]" if train else "train[95%:]"
+    # else:
     split = "train" if train else "val"
 
     dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=shuffle, num_parallel_reads=num_parallel_reads)
@@ -244,6 +288,8 @@ def make_dataset_from_rlds(
         ),
         num_parallel_calls,
     )
+
+    import pdb; pdb.set_trace()
 
     return dataset, dataset_statistics
 

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Tuple, Type, Optional
 
+import os
 import numpy as np
 import torch
 from PIL import Image
@@ -17,11 +18,39 @@ from transformers import PreTrainedTokenizerBase
 
 from prismatic.models.backbones.llm.prompting import PromptBuilder
 from prismatic.models.backbones.vision import ImageTransform
+from prismatic.util.cot_utils import CotTag, abbreviate_tag
 from prismatic.util.data_utils import tree_map
 from prismatic.vla.action_tokenizer import ActionTokenizer
 from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
 from prismatic.vla.datasets.rlds import make_interleaved_dataset, make_single_dataset
 from prismatic.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
+
+
+def reasoning_dropout(reasoning: str, dropout_prob: float) -> Tuple[str, str]:
+    """Dropout reasoning tokens with probability `dropout_prob`."""
+    if len(reasoning) == 0:
+        return reasoning, ""
+
+    reasoning_parts = reasoning.split("@")
+    tags = [(reasoning_parts[i], reasoning_parts[i + 1]) for i in range(0, len(reasoning_parts), 2)]
+
+    subset = np.random.rand(len(tags)) > dropout_prob
+
+    subset_string = (
+        "[" + ", ".join([abbreviate_tag(tag) for (tag, _), is_taken in zip(tags, subset) if is_taken]) + "]"
+    )  # abbreviation
+
+    excluded_tags = []
+
+    if "EXCLUDE_TAGS" in os.environ:
+        excluded_tags = os.environ["EXCLUDE_TAGS"].split(",")
+
+    return (
+        " ".join(
+            [f"{tag[0]} {tag[1]}" for tag, is_taken in zip(tags, subset) if (is_taken and tag[0] not in excluded_tags)]
+        ),
+        subset_string,
+    )
 
 @dataclass
 class RLDSBatchTransform:
@@ -33,6 +62,7 @@ class RLDSBatchTransform:
     use_wrist_image: bool = False
     use_proprio: bool = False
     history_size: int = 0
+    reasoning_dropout_prob: float = 0.0
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
@@ -40,6 +70,11 @@ class RLDSBatchTransform:
         img = Image.fromarray(rlds_batch["observation"]["image_primary"][self.history_size])
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
         actions = rlds_batch["action"][self.history_size:]
+        import pdb; pdb.set_trace()
+        if "reasoning" in rlds_batch:
+            reasoning, subset = reasoning_dropout(rlds_batch["reasoning"].decode(), dropout_prob=self.reasoning_dropout_prob)
+        else:
+            reasoning, subset = "", ""
 
         # Construct Chat-based Prompt =>> Input is default query + language instruction, output are the action tokens
         prompt_builder = self.prompt_builder_fn("openvla")
@@ -118,6 +153,7 @@ class RLDSDataset(IterableDataset):
         image_aug: bool = False,
         window_size: Optional[int] = None,
         future_action_window_size: Optional[int] = None,
+        reasoning_ratio: Optional[float] = 0.0,
     ) -> None:
         """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
         self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
@@ -202,6 +238,7 @@ class RLDSDataset(IterableDataset):
         return make_interleaved_dataset(**rlds_config)
 
     def __iter__(self) -> Dict[str, Any]:
+        import pdb; pdb.set_trace()
         for rlds_batch in self.dataset.as_numpy_iterator():
             yield self.batch_transform(rlds_batch)
 
