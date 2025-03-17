@@ -13,7 +13,7 @@ You can run `pip install -e .` to install the dependencies required for this rep
 :warning::warning::warning: Make sure that you have installed the `transformers` from our forked repo otherwise the attention implementation will be incorrect (no parallel decoding). It can also be manually installed by running:
 
 ```
-pip install transformers @ git+https://github.com/gen-robot/transformers.git@openvla
+pip install git+https://github.com/gen-robot/transformers.git@openvla
 ```
 
 ---

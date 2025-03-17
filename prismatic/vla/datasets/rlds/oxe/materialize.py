@@ -28,7 +28,10 @@ def make_oxe_dataset_kwargs(
     action_proprio_normalization_type = ACTION_PROPRIO_NORMALIZATION_TYPE,
 ) -> Dict[str, Any]:
     """Generates config (kwargs) for given dataset from Open-X Embodiment."""
-    dataset_kwargs = deepcopy(OXE_DATASET_CONFIGS[dataset_name])
+    if dataset_name.startswith("cobot"):
+        dataset_kwargs = deepcopy(OXE_DATASET_CONFIGS["cobot_rlds_dataset"])
+    else:
+        dataset_kwargs = deepcopy(OXE_DATASET_CONFIGS[dataset_name])
 
     if dataset_kwargs["action_encoding"] not in [
         ActionEncoding.EEF_POS, ActionEncoding.EEF_R6, ActionEncoding.JOINT_POS, ActionEncoding.JOINT_POS_BIMANUAL
@@ -84,7 +87,10 @@ def make_oxe_dataset_kwargs(
         dataset_kwargs["language_key"] = "language_instruction"
 
     # Specify Standardization Transform
-    dataset_kwargs["standardize_fn"] = OXE_STANDARDIZATION_TRANSFORMS[dataset_name]
+    if dataset_name.startswith("cobot"):
+        dataset_kwargs["standardize_fn"] = OXE_STANDARDIZATION_TRANSFORMS["cobot_rlds_dataset"]
+    else:
+        dataset_kwargs["standardize_fn"] = OXE_STANDARDIZATION_TRANSFORMS[dataset_name]
 
     # Add any aux arguments
     if "aux_kwargs" in dataset_kwargs:

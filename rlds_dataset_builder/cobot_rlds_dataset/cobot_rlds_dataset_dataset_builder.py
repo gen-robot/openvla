@@ -50,6 +50,8 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
                     'qpos': tfds.features.Tensor(shape=(14,), dtype=np.float32,),
                     'qvel': tfds.features.Tensor(shape=(14,), dtype=np.float32,),
                     'instruction': tfds.features.Text(), # TODO: language_instruction instead of instruction
+                    'expanded_instruction': tfds.features.Sequence(tfds.features.Text()),
+                    'simplified_instruction': tfds.features.Sequence(tfds.features.Text()),
                     'terminate_episode': tfds.features.Tensor(shape=(), dtype=np.bool_),
                     # 'language_embedding': tfds.features.Tensor(shape=(512,), dtype=np.float32,
                     #     doc='Kona language embedding. '
@@ -65,10 +67,15 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
 
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
-        return {
-            'train': self._generate_examples(path='/nvme_data/embodied_agent/cobot_data/new_open_drawer/episode_*.hdf5'),
-            # 'val': self._generate_examples(path='data/val/episode_*.npy'),
+        train_data_dir = os.environ['TRAIN_DATA_DIR']
+        assert train_data_dir is not None, "TRAIN_DATA_DIR is not set"
+        split_dict = {
+            'train': self._generate_examples(path=os.path.join(train_data_dir, 'episode_*.hdf5')),
         }
+        val_data_dir = os.environ['VAL_DATA_DIR']
+        if val_data_dir is not None:
+            split_dict['val'] = self._generate_examples(path=os.path.join(val_data_dir, 'episode_*.hdf5'))
+        return split_dict
 
     def _generate_examples(self, path) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
@@ -81,7 +88,10 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
                 os.path.dirname(episode_path), 
                 'expanded_instruction_gpt-4-turbo.json'), 'r'
             ) as f_instr:
-                instruction = json.load(f_instr)['instruction']
+                json_file = json.load(f_instr)
+                instruction = json_file['instruction']
+                simplified_instruction = json_file['simplified_instruction']
+                expanded_instruction = json_file['expanded_instruction']
             # Remove the first few still steps
             EPS = 1e-2
             num_episodes = f['action'].shape[0]
@@ -128,6 +138,8 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
                     'action': process_qpos(f['observations']['qpos'], i+1).astype(np.float32), #process_action(f['action'], i).astype(np.float32),
                     'base_action': f['base_action'][i].astype(np.float32),
                     'instruction': instruction,
+                    'expanded_instruction': expanded_instruction,
+                    'simplified_instruction': simplified_instruction,
                     'terminate_episode': i == num_episodes - 2,
                 })
 

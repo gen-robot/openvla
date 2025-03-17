@@ -72,7 +72,8 @@ class FinetuneConfig:
     use_local_vla: bool = True
 
     window_size: Optional[int] = None                # If provided, uses a sliding window of this size to chunk the past observations and actions
-    future_action_window_size: Optional[int] = None  # If provided, uses a future action window of this size to chunk the future actions
+    action_chunk_size: Optional[int] = None          # If provided, uses a action chunk of this size to chunk the future actions
+    # future_action_window_size: Optional[int] = None  # If provided, uses a future action window of this size to chunk the future actions
 
     # Dataset
     data_root_dir: Path = Path("datasets/rlds")      # Directory containing RLDS datasets
@@ -397,6 +398,7 @@ def run_forward_pass(
         text_hidden_states = last_hidden_states[:, num_patches:-1]
         # Get hidden states for action portion of response
         batch_size = batch["input_ids"].shape[0]
+
         actions_hidden_states = (
             text_hidden_states[current_action_mask | next_actions_mask]
             .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
@@ -795,6 +797,12 @@ def finetune(cfg: FinetuneConfig) -> None:
     cfg.vla_path = cfg.vla_path.rstrip("/")
     print(f"Fine-tuning OpenVLA Model `{cfg.vla_path}` on `{cfg.dataset_name}`")
 
+    if cfg.action_chunk_size is not None:
+        cfg.future_action_window_size = cfg.action_chunk_size - 1
+        NUM_ACTIONS_CHUNK = cfg.action_chunk_size
+    else:
+        cfg.future_action_window_size = None
+
     # Get experiment run ID
     run_id = get_run_id(cfg)
 
@@ -938,7 +946,12 @@ def finetune(cfg: FinetuneConfig) -> None:
             "action_head",
             cfg,
             device_id,
-            {"input_dim": vla.module.llm_dim, "hidden_dim": vla.module.llm_dim, "action_dim": ACTION_DIM},
+            {
+                "input_dim": vla.module.llm_dim,
+                "hidden_dim": vla.module.llm_dim,
+                "action_dim": ACTION_DIM,
+                "num_actions_chunk": NUM_ACTIONS_CHUNK,
+            },
             to_bf16=True,
         )
 
@@ -953,6 +966,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 "input_dim": vla.module.llm_dim,
                 "hidden_dim": vla.module.llm_dim,
                 "action_dim": ACTION_DIM,
+                "num_actions_chunk": NUM_ACTIONS_CHUNK,
                 "num_diffusion_steps": cfg.num_diffusion_steps,
             },
             to_bf16=True,

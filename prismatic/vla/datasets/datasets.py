@@ -151,7 +151,7 @@ class RLDSDataset(IterableDataset):
             window_size = 1
 
         if future_action_window_size is not None:
-            future_action_window_size = future_action_window_size
+            future_action_window_size = future_action_window_size-1
         else:
             future_action_window_size = NUM_ACTIONS_CHUNK-1
 

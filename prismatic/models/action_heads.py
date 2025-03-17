@@ -88,11 +88,13 @@ class L1RegressionActionHead(nn.Module):
         input_dim=4096,
         hidden_dim=4096,
         action_dim=7,
+        num_actions_chunk=25,
     ):
         super().__init__()
         self.action_dim = action_dim
+        self.num_actions_chunk = num_actions_chunk
         self.model = MLPResNet(
-            num_blocks=2, input_dim=input_dim*ACTION_DIM, hidden_dim=hidden_dim, output_dim=action_dim
+            num_blocks=2, input_dim=input_dim*self.action_dim, hidden_dim=hidden_dim, output_dim=action_dim
         )
 
     def predict_action(self, actions_hidden_states):
@@ -102,7 +104,7 @@ class L1RegressionActionHead(nn.Module):
         # - shape: (batch_size, chunk_len, action_dim)
         batch_size = actions_hidden_states.shape[0]
         device = actions_hidden_states.device
-        rearranged_actions_hidden_states = actions_hidden_states.reshape(batch_size, NUM_ACTIONS_CHUNK, -1)
+        rearranged_actions_hidden_states = actions_hidden_states.reshape(batch_size, self.num_actions_chunk, -1)
         action = self.model(rearranged_actions_hidden_states)
         return action
 
@@ -119,6 +121,7 @@ class NoisePredictionModel(nn.Module):
         transformer_hidden_dim,  # Transformer hidden embedding size
         hidden_dim,  # MLP hidden size
         action_dim=7,  # action dimensionality
+        num_actions_chunk=25,
     ):
         super().__init__()
         self.mlp_resnet = MLPResNet(
@@ -127,6 +130,7 @@ class NoisePredictionModel(nn.Module):
             hidden_dim=hidden_dim,
             output_dim=action_dim,
         )
+        self.num_actions_chunk = num_actions_chunk
 
     def forward(
         self,
@@ -153,10 +157,12 @@ class DiffusionActionHead(nn.Module):
         input_dim=4096,
         hidden_dim=4096,
         action_dim=7,
+        num_actions_chunk=25,
         num_diffusion_steps=100,
     ):
         super().__init__()
         self.action_dim = action_dim
+        self.num_actions_chunk = num_actions_chunk
         self.noise_predictor = NoisePredictionModel(
             transformer_hidden_dim=hidden_dim*ACTION_DIM, hidden_dim=hidden_dim, action_dim=action_dim
         )
@@ -175,7 +181,7 @@ class DiffusionActionHead(nn.Module):
         batch_size = ground_truth_actions.shape[0]
         device = ground_truth_actions.device
         # Sample random noise with shape equal to actions, used for closed-form forward diffusion.
-        noise = torch.randn(size=(batch_size, NUM_ACTIONS_CHUNK, ACTION_DIM), device=device, dtype=ground_truth_actions.dtype)  # (B, chunk_len, action_dim)
+        noise = torch.randn(size=(batch_size, self.num_actions_chunk, self.action_dim), device=device, dtype=ground_truth_actions.dtype)  # (B, chunk_len, action_dim)
         # Sample random diffusion timesteps (one for each action in batch).
         timesteps = torch.randint(
             low=0, high=self.noise_scheduler.config.num_train_timesteps, size=(batch_size,), device=device
@@ -205,7 +211,7 @@ class DiffusionActionHead(nn.Module):
         # - shape: (batch_size, chunk_len * action_dim, hidden_dim)
         batch_size = actions_hidden_states.shape[0]
         device = actions_hidden_states.device
-        rearranged_actions_hidden_states = actions_hidden_states.reshape(batch_size, NUM_ACTIONS_CHUNK, -1)  # (batch_size, chunk_len, action_dim * hidden_dim)
+        rearranged_actions_hidden_states = actions_hidden_states.reshape(batch_size, self.num_actions_chunk, -1)  # (batch_size, chunk_len, action_dim * hidden_dim)
         # Get diffusion model's noise prediction.
         noise_pred = self.noise_predictor(rearranged_actions_hidden_states)
         return noise_pred
