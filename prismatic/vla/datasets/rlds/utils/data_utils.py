@@ -164,12 +164,12 @@ def relabel_bridge_actions(traj: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # === RLDS Dataset Initialization Utilities ===
-def pprint_data_mixture(dataset_kwargs_list: List[Dict[str, Any]], dataset_weights: List[int]) -> None:
+def pprint_data_mixture(dataset_kwargs_list: List[Dict[str, Any]], dataset_weights: List[int], dataset_sizes: List[int]) -> None:
     print("\n######################################################################################")
     print(f"# Loading the following {len(dataset_kwargs_list)} datasets (incl. sampling weight):{'': >24} #")
-    for dataset_kwargs, weight in zip(dataset_kwargs_list, dataset_weights):
-        pad = 80 - len(dataset_kwargs["name"])
-        print(f"# {dataset_kwargs['name']}: {weight:=>{pad}f} #")
+    for dataset_kwargs, dataset_weight, dataset_size in zip(dataset_kwargs_list, dataset_weights, dataset_sizes):
+        pad = 80 - len(dataset_kwargs["name"]) - len(str(dataset_size)) - 4
+        print(f"# {dataset_kwargs['name']}: {dataset_weight:=>{pad}f}, {dataset_size:d} steps #")
     print("######################################################################################\n")
 
 

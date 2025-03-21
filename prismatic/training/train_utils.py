@@ -5,38 +5,60 @@ import torch
 from prismatic.vla.constants import ACTION_DIM, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX
 
 
-def get_current_action_mask(token_ids):
-    # Create a tensor marking positions of IGNORE_INDEX
-    newline_positions = token_ids != IGNORE_INDEX
-
-    # Calculate cumulative sum to identify regions between newlines
-    cumsum = torch.cumsum(newline_positions, dim=1)
-
-    # Create the mask
+def get_current_action_mask(token_ids, action_token_begin_idx=ACTION_TOKEN_BEGIN_IDX):
+    # First identify action tokens (those greater than ACTION_TOKEN_BEGIN_IDX)
+    action_tokens_mask = token_ids > action_token_begin_idx
+    
+    # Create a tensor marking valid positions (not IGNORE_INDEX)
+    valid_positions = token_ids != IGNORE_INDEX
+    
+    # Calculate cumulative sum of valid action tokens to identify regions
+    action_valid_positions = action_tokens_mask & valid_positions
+    cumsum = torch.cumsum(action_valid_positions, dim=1)
+    
+    # Create the mask for current actions (first ACTION_DIM action tokens)
     mask = (1 <= cumsum) & (cumsum <= ACTION_DIM)
-
-    # Extract the action part only
-    action_tokens_only_mask = token_ids > ACTION_TOKEN_BEGIN_IDX
-    mask = action_tokens_only_mask * mask
+    
+    # Final mask is where we have action tokens that are in the current action region
+    mask = action_tokens_mask & mask
 
     return mask
 
 
-def get_next_actions_mask(token_ids):
-    # Create a tensor marking positions of IGNORE_INDEX
-    newline_positions = token_ids != IGNORE_INDEX
-
-    # Calculate cumulative sum to identify regions between newlines
-    cumsum = torch.cumsum(newline_positions, dim=1)
-
-    # Create the mask
+def get_next_actions_mask(token_ids, action_token_begin_idx=ACTION_TOKEN_BEGIN_IDX):
+    # First identify action tokens (those greater than ACTION_TOKEN_BEGIN_IDX)
+    action_tokens_mask = token_ids > action_token_begin_idx
+    
+    # Create a tensor marking valid positions (not IGNORE_INDEX)
+    valid_positions = token_ids != IGNORE_INDEX
+    
+    # Calculate cumulative sum of valid action tokens to identify regions
+    action_valid_positions = action_tokens_mask & valid_positions
+    cumsum = torch.cumsum(action_valid_positions, dim=1)
+    
+    # Create the mask for future actions (after the first ACTION_DIM action tokens)
     mask = cumsum > ACTION_DIM
-
-    # Extract the action part only
-    action_tokens_only_mask = token_ids > ACTION_TOKEN_BEGIN_IDX
-    mask = action_tokens_only_mask * mask
-
+    
+    # Final mask is where we have action tokens that are in the future action region
+    mask = action_tokens_mask & mask
+    
     return mask
+
+
+def get_valid_text_mask(token_ids, action_token_begin_idx=ACTION_TOKEN_BEGIN_IDX):
+    # It will actually include the stop token if it's not ignored
+
+    # Identify valid tokens (not IGNORE_INDEX)
+    valid_tokens = token_ids != IGNORE_INDEX
+    
+    # Identify non-action tokens (not greater than ACTION_TOKEN_BEGIN_IDX)
+    non_action_tokens = token_ids <= action_token_begin_idx
+    
+    # Reasoning tokens are valid tokens that are not action tokens
+    reasoning_mask = valid_tokens & non_action_tokens
+    
+    return reasoning_mask
+
 
 
 def compute_token_accuracy(predicted_token_ids, ground_truth_token_ids, mask):

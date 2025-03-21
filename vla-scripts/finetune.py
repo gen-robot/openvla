@@ -49,8 +49,10 @@ from prismatic.training.train_utils import (
     compute_token_accuracy,
     get_current_action_mask,
     get_next_actions_mask,
+    get_valid_text_mask
 )
 from prismatic.util.data_utils import PaddedCollatorForActionPrediction
+from prismatic.util.cot_utils import compute_cot_accuracy
 from prismatic.vla.action_tokenizer import ActionTokenizer
 from prismatic.vla.constants import (
     ACTION_DIM,
@@ -89,6 +91,8 @@ class FinetuneConfig:
     use_film: bool = False                           # If True, uses FiLM to infuse language inputs into visual features
     num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
     use_proprio: bool = False                        # If True, includes robot proprioceptive state in input
+    enable_cot: bool = False                         # If True, uses COT for reasoning
+    cot_weight: float = 1.0                          # (When `enable_cot==True`) Weight for COT loss
 
     # Training configuration
     batch_size: int = 8                              # Batch size per device (total batch size = batch_size * num GPUs)
@@ -197,6 +201,10 @@ def get_run_id(cfg) -> str:
             run_id += f"+ws-{cfg.window_size}"
         if cfg.future_action_window_size is not None:
             run_id += f"+fas-{cfg.future_action_window_size}"
+        if cfg.use_parallel_decoding:
+            run_id += "+pd"
+        if cfg.enable_cot:
+            run_id += "+cot"
     return run_id
 
 
@@ -288,7 +296,9 @@ def init_module(
 
 
 def run_forward_pass(
+    batch_idx,
     vla,
+    processor,
     action_head,
     noisy_action_projector,
     proprio_projector,
@@ -303,6 +313,7 @@ def run_forward_pass(
     compute_diffusion_l1=False,
     num_diffusion_steps=None,
     num_actions_chunk=NUM_ACTIONS_CHUNK,
+    enable_cot=False,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Compute model forward pass and metrics for both training and validation.
@@ -364,13 +375,47 @@ def run_forward_pass(
 
     # Get action masks needed for logging
     ground_truth_token_ids = batch["labels"][:, 1:].to(device_id)
-    current_action_mask = get_current_action_mask(ground_truth_token_ids)
-    next_actions_mask = get_next_actions_mask(ground_truth_token_ids)
+    current_action_mask = get_current_action_mask(
+        ground_truth_token_ids, 
+        action_token_begin_idx=action_tokenizer.action_token_begin_idx)
+    next_actions_mask = get_next_actions_mask(
+        ground_truth_token_ids, 
+        action_token_begin_idx=action_tokenizer.action_token_begin_idx)
+    text_mask = get_valid_text_mask(
+        ground_truth_token_ids, 
+        action_token_begin_idx=action_tokenizer.action_token_begin_idx)
+
+    # if text_mask is not all False
+    if (use_l1_regression or use_diffusion) and text_mask.any():
+        _shape = ground_truth_token_ids.shape
+        predicted_logits = output.logits[:, num_patches:-1]
+        flatten_predicted_logits = predicted_logits.reshape(-1, predicted_logits.shape[-1])
+        flatten_ground_truth_token_ids = ground_truth_token_ids.reshape(-1)
+        text_loss = nn.functional.cross_entropy(
+            flatten_predicted_logits, flatten_ground_truth_token_ids, 
+            reduction="none")
+        text_loss = text_loss.reshape(_shape) * text_mask
+        balance_weight = 0.01 if use_l1_regression else 0.1 # TODO: check these values
+        text_loss = text_loss.mean() * balance_weight # cross_entropy loss is about 100x/10x larger than the l1/diffusion loss
+        metrics.update({"text_loss_value": text_loss.item(),})
+    else:
+        text_loss = torch.tensor(0.0, device=device_id)
+
+    predicted_token_ids = output.logits[:, num_patches:-1].argmax(dim=2)
+    if text_mask.any():
+        text_accuracy = compute_token_accuracy(
+            predicted_token_ids, ground_truth_token_ids, mask=text_mask
+        )
+        metrics.update({"text_accuracy": text_accuracy.item(),})
+
+    if enable_cot and batch_idx % 1 == 0:
+        cot_metrics = compute_cot_accuracy(
+            predicted_token_ids, ground_truth_token_ids, llm_tokenizer=processor.tokenizer)
+        metrics.update(cot_metrics)
 
     # Compute metrics for discrete action representation (next-token prediction)
     if not (use_l1_regression or use_diffusion):
         loss = output.loss
-        predicted_token_ids = output.logits[:, num_patches:-1].argmax(dim=2)
         curr_action_accuracy = compute_token_accuracy(
             predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
         )
@@ -400,7 +445,6 @@ def run_forward_pass(
         text_hidden_states = last_hidden_states[:, num_patches:-1]
         # Get hidden states for action portion of response
         batch_size = batch["input_ids"].shape[0]
-        import pdb; pdb.set_trace()
         actions_hidden_states = (
             text_hidden_states[current_action_mask | next_actions_mask]
             .reshape(batch_size, num_actions_chunk * ACTION_DIM, -1)
@@ -461,6 +505,8 @@ def run_forward_pass(
                     "next_actions_l1_loss": next_actions_l1_loss.item(),
                 }
             )
+
+    loss = loss + text_loss
 
     # Return both the loss tensor (with gradients) and the metrics dictionary (with detached values)
     return loss, metrics
@@ -693,6 +739,7 @@ def save_training_checkpoint(
 
 def run_validation(
     vla,
+    processor,
     action_head,
     noisy_action_projector,
     proprio_projector,
@@ -704,6 +751,7 @@ def run_validation(
     log_step,
     distributed_state,
     val_time_limit,
+    enable_cot,
 ) -> None:
     """
     Compute validation set metrics for logging.
@@ -733,10 +781,12 @@ def run_validation(
     all_val_metrics = []
 
     with torch.no_grad():
-        for batch in val_dataloader:
+        for batch_idx, batch in enumerate(val_dataloader):
             # Always compute L1 loss for validation, even for diffusion
             _, metrics = run_forward_pass(
+                batch_idx=batch_idx,
                 vla=vla,
+                processor=processor,
                 action_head=action_head,
                 noisy_action_projector=noisy_action_projector,
                 proprio_projector=proprio_projector,
@@ -750,6 +800,7 @@ def run_validation(
                 num_patches=num_patches,
                 compute_diffusion_l1=True,
                 num_diffusion_steps=cfg.num_diffusion_steps if cfg.use_diffusion else None,
+                enable_cot=cfg.enable_cot,
             )
 
             # Add the loss value to the metrics
@@ -795,6 +846,9 @@ def finetune(cfg: FinetuneConfig) -> None:
     assert cfg.use_lora, "Only LoRA fine-tuning is supported. Please set --use_lora=True!"
     assert not (cfg.use_l1_regression and cfg.use_diffusion), (
         "Cannot do both L1 regression and diffusion. Please pick one of them!"
+    )
+    assert not (cfg.use_parallel_decoding and cfg.enable_cot), (
+        "Cannot use parallel decoding and CoT at the same time! Disable PD when training with CoT."
     )
 
     # Trim trailing forward slash ('/') in VLA path if it exists
@@ -1053,6 +1107,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         image_aug=cfg.image_aug,
         window_size=cfg.window_size,
         future_action_window_size=cfg.future_action_window_size,
+        enable_cot=cfg.enable_cot,
     )
     if cfg.use_val_set:
         val_dataset = RLDSDataset(
@@ -1065,6 +1120,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             train=False,
             window_size=cfg.window_size,
             future_action_window_size=cfg.future_action_window_size,
+            enable_cot=cfg.enable_cot,
         )
 
     # [Important] Save dataset statistics so that we can unnormalize actions during inference
@@ -1109,7 +1165,9 @@ def finetune(cfg: FinetuneConfig) -> None:
             # Compute training metrics and loss
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
             loss, metrics = run_forward_pass(
+                batch_idx=batch_idx,
                 vla=vla,
+                processor=processor,
                 action_head=action_head if (cfg.use_diffusion or cfg.use_l1_regression) else None,
                 noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
                 proprio_projector=proprio_projector if cfg.use_proprio else None,
@@ -1124,6 +1182,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 compute_diffusion_l1=compute_diffusion_l1,
                 num_diffusion_steps=cfg.num_diffusion_steps if cfg.use_diffusion else None,
                 num_actions_chunk=num_actions_chunk,
+                enable_cot=cfg.enable_cot,
             )
 
             # Normalize loss to account for gradient accumulation
@@ -1135,6 +1194,9 @@ def finetune(cfg: FinetuneConfig) -> None:
             # Store recent train metrics
             for metric_name, value in metrics.items():
                 if metric_name in recent_metrics:
+                    recent_metrics[metric_name].append(value)
+                else:
+                    recent_metrics[metric_name] = deque(maxlen=cfg.grad_accumulation_steps)
                     recent_metrics[metric_name].append(value)
 
             # Compute gradient step index
@@ -1191,6 +1253,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             if cfg.use_val_set and log_step > 0 and log_step % cfg.val_freq == 0:
                 run_validation(
                     vla=vla,
+                    processor=processor,
                     action_head=action_head,
                     noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
                     proprio_projector=proprio_projector if cfg.use_proprio else None,
@@ -1202,6 +1265,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                     log_step=log_step,
                     distributed_state=distributed_state,
                     val_time_limit=cfg.val_time_limit,
+                    enable_cot=cfg.enable_cot,
                 )
                 # Set model back to training mode after validation
                 vla.train()

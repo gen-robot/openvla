@@ -5,11 +5,11 @@ Lightweight PyTorch Dataset Definition for wrapping RLDS TFDS Pipeline; just def
 format to OpenVLA, IterableDataset shim.
 """
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Tuple, Type, Optional
 
-import os
 import numpy as np
 import torch
 from PIL import Image
@@ -21,7 +21,15 @@ from prismatic.models.backbones.vision import ImageTransform
 from prismatic.util.cot_utils import CotTag, abbreviate_tag
 from prismatic.util.data_utils import tree_map
 from prismatic.vla.action_tokenizer import ActionTokenizer
-from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
+from prismatic.vla.constants import (
+    ACTION_DIM,
+    ACTION_PROPRIO_NORMALIZATION_TYPE,
+    ACTION_TOKEN_BEGIN_IDX,
+    IGNORE_INDEX,
+    NUM_ACTIONS_CHUNK,
+    PROPRIO_DIM,
+    STOP_INDEX,
+)
 from prismatic.vla.datasets.rlds import make_interleaved_dataset, make_single_dataset
 from prismatic.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
 
@@ -52,6 +60,7 @@ def reasoning_dropout(reasoning: str, dropout_prob: float) -> Tuple[str, str]:
         subset_string,
     )
 
+
 @dataclass
 class RLDSBatchTransform:
     action_tokenizer: ActionTokenizer
@@ -62,7 +71,8 @@ class RLDSBatchTransform:
     use_wrist_image: bool = False
     use_proprio: bool = False
     history_size: int = 0
-    reasoning_dropout_prob: float = 0.0
+    print_prompt_limit: int = 20
+    reasoning_dropout_prob: float = 0.2
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
@@ -70,9 +80,11 @@ class RLDSBatchTransform:
         img = Image.fromarray(rlds_batch["observation"]["image_primary"][self.history_size])
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
         actions = rlds_batch["action"][self.history_size:]
-        import pdb; pdb.set_trace()
         if "reasoning" in rlds_batch:
-            reasoning, subset = reasoning_dropout(rlds_batch["reasoning"].decode(), dropout_prob=self.reasoning_dropout_prob)
+            reasoning, subset = reasoning_dropout(
+                rlds_batch["reasoning"].decode(),
+                dropout_prob=self.reasoning_dropout_prob,
+            )
         else:
             reasoning, subset = "", ""
 
@@ -87,11 +99,22 @@ class RLDSBatchTransform:
         current_action_string = self.action_tokenizer(current_action)
         action_chunk_string = current_action_string + future_actions_string
         action_chunk_len = len(action_chunk_string)
+ 
+        if lang.endswith("."):
+            lang = lang[:-1]
 
-        conversation = [
-            {"from": "human", "value": f"What action should the robot take to {lang}?"},
-            {"from": "gpt", "value": action_chunk_string},
-        ]
+        if len(reasoning) > 0:
+            conversation = [
+                {"from": "human", "value": f"What action should the robot take to {lang}? Explain why with {subset}."},
+                # {"from": "human", "value": f"What action should the robot take to {lang}?"},
+                {"from": "gpt", "value": f"{reasoning} {CotTag.ACTION.value} {action_chunk_string}"},
+            ]
+        else:
+            conversation = [
+                {"from": "human", "value": f"What action should the robot take to {lang}?"},
+                {"from": "gpt", "value": f"{action_chunk_string}"},
+            ]
+
         for turn in conversation:
             prompt_builder.add_turn(turn["from"], turn["value"])
 
@@ -99,15 +122,41 @@ class RLDSBatchTransform:
         input_ids = self.base_tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids
         labels = list(input_ids)
 
-        # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
-        #   =>> IMPORTANT :: IF WE'RE USING HF LLM.forward(..., labels=labels), SHIFTING HAPPENS _INSIDE_ MODEL!
-        input_ids, labels = torch.tensor(input_ids), torch.tensor(labels)
-        pixel_values = self.image_transform(img)
+        # Find the sequence of split tokens in labels
+        split_tokens = [13, 3744, 29901]  # part of tokens for "\nOut: "
+        for i in range(len(labels) - len(split_tokens) + 1):
+            if labels[i:i+len(split_tokens)] == split_tokens:
+                split_idx = i + len(split_tokens)  # Use the end of the matched sequence
+                break
+        else:
+            # Fallback if sequence not found
+            split_idx = len(labels) - action_chunk_len - 1
 
+        input_ids, labels = torch.tensor(input_ids), torch.tensor(labels)
         # [CRITICAL] We do not want to take the loss for anything but the predicted action tokens!
-        labels[: -(action_chunk_len + 1)] = IGNORE_INDEX
+        # labels[: -(action_chunk_len + 1)] = IGNORE_INDEX
+        labels[:split_idx] = IGNORE_INDEX # ignore the context tokens
         if not self.predict_stop_token:
             labels[-1] = IGNORE_INDEX
+        
+        if self.print_prompt_limit > 0:
+            print("*" * 50)
+            print(f"[EXAMPLE #{self.print_prompt_limit}]")
+            if len(subset) > 0:
+                print(f">>> Included tags:\n", subset)
+            else:
+                print(">>> No CoT tags included!")
+            print(f">>> Conversation:\n", conversation)
+            print(f">>> Prompt:\n", prompt_builder.get_prompt())
+            print(f">>> Tokenized Prompt:\n", input_ids)
+            print(f">>> Labels:\n", labels)
+            print("*" * 50)
+            self.print_prompt_limit -= 1
+
+        # import pdb; pdb.set_trace()
+        # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
+        #   =>> IMPORTANT :: IF WE'RE USING HF LLM.forward(..., labels=labels), SHIFTING HAPPENS _INSIDE_ MODEL!
+        pixel_values = self.image_transform(img)
 
         return_dict = dict(
             pixel_values=pixel_values,
@@ -153,10 +202,11 @@ class RLDSDataset(IterableDataset):
         image_aug: bool = False,
         window_size: Optional[int] = None,
         future_action_window_size: Optional[int] = None,
-        reasoning_ratio: Optional[float] = 0.0,
+        enable_cot: bool = False,
     ) -> None:
         """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
         self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
+        self.enable_cot = enable_cot
 
         # Configure RLDS Dataset(s)
         if self.data_mix in OXE_NAMED_MIXTURES:
@@ -168,6 +218,8 @@ class RLDSDataset(IterableDataset):
         # fmt: off
         if "aloha" in self.data_mix or "cobot" in self.data_mix:
             load_camera_views = ("primary", "left_wrist", "right_wrist")
+        elif "bridge" in self.data_mix:
+            load_camera_views = ("primary",)
         else:
             load_camera_views = ("primary", "wrist")
 
@@ -193,8 +245,8 @@ class RLDSDataset(IterableDataset):
 
         rlds_config = dict(
             traj_transform_kwargs=dict(
-                window_size=window_size,                            # If we wanted to feed / predict more than one step
-                future_action_window_size=future_action_window_size,# For action chunking
+                window_size=1,                            # If we wanted to feed / predict more than one step
+                future_action_window_size=future_action_window_size,              # For action chunking
                 skip_unlabeled=True,                                # Skip trajectories without language labels
                 goal_relabeling_strategy="uniform",                 # Goals are currently unused
             ),
@@ -235,10 +287,9 @@ class RLDSDataset(IterableDataset):
         self.dataset, self.dataset_length, self.dataset_statistics = self.make_dataset(rlds_config)
 
     def make_dataset(self, rlds_config):
-        return make_interleaved_dataset(**rlds_config)
+        return make_interleaved_dataset(**rlds_config, enable_cot=self.enable_cot)
 
     def __iter__(self) -> Dict[str, Any]:
-        import pdb; pdb.set_trace()
         for rlds_batch in self.dataset.as_numpy_iterator():
             yield self.batch_transform(rlds_batch)
 

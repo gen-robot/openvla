@@ -841,13 +841,11 @@ def libero_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 def cobot_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
-    # import pdb; pdb.set_trace()
     trajectory["language_instruction"] = trajectory["instruction"]
     trajectory["observation"]["qpos"] = trajectory["qpos"]
     return trajectory
 
 def example_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
-    # import pdb; pdb.set_trace()
     # trajectory["language_instruction"] = trajectory["instruction"]
     trajectory["observation"]["qpos"] = trajectory["observation"]["state"]
     return trajectory

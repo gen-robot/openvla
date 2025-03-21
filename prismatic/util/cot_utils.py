@@ -18,6 +18,7 @@ GRIPPER POSITION: [97, 45, 97, 45, 89, 52, 83, 58, 82, 57]
 
 
 import enum
+import torch
 import tensorflow as tf
 
 
@@ -127,3 +128,92 @@ def make_tf_hash_table(raw_dict):
         tf.lookup.KeyValueTensorInitializer(keys, values), 
         default_value="")
 
+
+def get_cot_masks(tokens, tags, llm_tokenizer):
+    tag_tokens = dict()
+
+    for tag in tags:
+        encoded_tags = llm_tokenizer.encode_plus(tag, return_tensors="pt")
+        tag_ids = encoded_tags["input_ids"][0]
+        tag_tokens[tag] = tag_ids[1:].to(tokens.device)
+
+    tag_masks = dict()
+    prev_tag = None
+    prev_pos = 0
+
+    def make_mask(a, b):
+        mask = torch.zeros_like(tokens)
+        mask[a:b] = 1
+        return mask
+
+    # find position of a small list of tokens in the larger list of tokens
+    for i in range(len(tokens) - 1):
+        for tag, tag_ids in tag_tokens.items():
+            if i + len(tag_ids) > len(tokens):
+                continue
+
+            if torch.all(tokens[i : i + len(tag_ids)] == tag_ids):
+                tag_masks[prev_tag] = make_mask(prev_pos, i)
+                prev_tag = tag
+                prev_pos = i + len(tag_ids)
+
+    tag_masks[prev_tag] = make_mask(prev_pos, len(tokens))
+    
+    for tag in tags:
+        if tag not in tag_masks:
+            tag_masks[tag] = make_mask(0, 0)
+
+    return tag_masks
+
+
+def compute_cot_accuracy(predicted_token_ids, ground_truth_token_ids, llm_tokenizer):
+    """
+    Compute the accuracy for each CoT tag.
+    Args:
+        predicted_token_ids: tensor of shape (batch_size, #tokens)
+        ground_truth_token_ids: tensor of shape (batch_size, #tokens)
+        llm_tokenizer: tokenizer, by default it's the LlamaTokenizerFast
+    Returns:
+        metrics: dictionary of accuracy for each tag
+    """
+    tags = get_cot_tags_list()[:-1]  # exclude ACTION
+    metrics = {}
+    
+    def get_batched_masks(tokens, tags):
+        final_masks = {tag: [] for tag in tags}
+
+        for group in tokens:
+            group_masks = get_cot_masks(group, tags, llm_tokenizer)
+            for tag in tags:
+                final_masks[tag].append(group_masks[tag])
+
+        for tag in tags:
+            final_masks[tag] = torch.stack(final_masks[tag], dim=0)
+
+        return final_masks
+    
+    final_pred_masks = get_batched_masks(predicted_token_ids, tags)
+    final_gt_masks = get_batched_masks(ground_truth_token_ids, tags)
+
+    # Compute accuracy for each tag
+    for tag in tags:
+        correct_tags = [0, 0]
+        
+        for reasoning_pred, mask_pred, reasoning_gt, mask_gt in zip(
+            predicted_token_ids, final_pred_masks[tag], ground_truth_token_ids, final_gt_masks[tag]
+        ):
+            tag_pred = torch.masked_select(reasoning_pred, mask_pred.bool())
+            tag_gt = torch.masked_select(reasoning_gt, mask_gt.bool())
+            
+            max_size = max(len(tag_pred), len(tag_gt))
+            tag_pred = torch.nn.functional.pad(tag_pred, (0, max_size - len(tag_pred)))
+            tag_gt = torch.nn.functional.pad(tag_gt, (0, max_size - len(tag_gt)))
+
+            correct_tags[0] += (tag_pred == tag_gt).sum().float()
+            correct_tags[1] += len(tag_gt)
+
+        if correct_tags[1] > 0:
+            tag_accuracy = correct_tags[0] / correct_tags[1]
+            metrics.update(**{f"reasoning/{tag[:-1].lower()}_tag_accuracy": tag_accuracy})
+
+    return metrics

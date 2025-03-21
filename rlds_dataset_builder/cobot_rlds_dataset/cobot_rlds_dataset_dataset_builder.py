@@ -49,6 +49,7 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
                     'base_action': tfds.features.Tensor(shape=(2,), dtype=np.float32,),
                     'qpos': tfds.features.Tensor(shape=(14,), dtype=np.float32,),
                     'qvel': tfds.features.Tensor(shape=(14,), dtype=np.float32,),
+                    'ee_pose': tfds.features.Tensor(shape=(14,), dtype=np.float32,),
                     'instruction': tfds.features.Text(), # TODO: language_instruction instead of instruction
                     'expanded_instruction': tfds.features.Sequence(tfds.features.Text()),
                     'simplified_instruction': tfds.features.Sequence(tfds.features.Text()),
@@ -62,6 +63,9 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
                     'file_path': tfds.features.Text(
                         doc='Path to the original data file.'
                     ),
+                    'episode_id': tfds.features.Text(
+                        doc='ID of the episode.'
+                    ),
                 }),
             }))
 
@@ -72,7 +76,7 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
         split_dict = {
             'train': self._generate_examples(path=os.path.join(train_data_dir, 'episode_*.hdf5')),
         }
-        val_data_dir = os.environ['VAL_DATA_DIR']
+        val_data_dir = os.environ.get('VAL_DATA_DIR', None)
         if val_data_dir is not None:
             split_dict['val'] = self._generate_examples(path=os.path.join(val_data_dir, 'episode_*.hdf5'))
         return split_dict
@@ -135,6 +139,7 @@ class CobotRldsDataset(tfds.core.GeneratorBasedBuilder):
                     },
                     'qpos': process_qpos(f['observations']['qpos'], i).astype(np.float32),
                     'qvel': f['observations']['qvel'][i].astype(np.float32),
+                    'ee_pose': f['observations']['ee_pose'][i].astype(np.float32),
                     'action': process_qpos(f['observations']['qpos'], i+1).astype(np.float32), #process_action(f['action'], i).astype(np.float32),
                     'base_action': f['base_action'][i].astype(np.float32),
                     'instruction': instruction,

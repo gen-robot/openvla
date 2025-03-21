@@ -9,9 +9,9 @@ from enum import Enum
 
 # Llama 2 token constants
 IGNORE_INDEX = -100
+ # 32064 total tokens in the vocabulary, which means there are 32064 - 31743 = 321 remaining tokens for actions
 ACTION_TOKEN_BEGIN_IDX = 31743
 STOP_INDEX = 2  # '</s>'
-
 
 # Defines supported normalization schemes for action and proprioceptive state.
 class NormalizationType(str, Enum):

@@ -594,11 +594,14 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
 
             # Extract action masks
             all_actions_mask = self._process_action_masks(labels)
-
-            # Extract the language portion of the input embeddings (i.e. remove the action tokens portion)
-            language_embeddings = input_embeddings[~all_actions_mask].reshape(
-                input_embeddings.shape[0], -1, input_embeddings.shape[2]
-            )  # (B, lang_seq_len, llm_dim)
+            
+            try:
+                # Extract the language portion of the input embeddings (i.e. remove the action tokens portion)
+                language_embeddings = input_embeddings[~all_actions_mask].reshape(
+                    input_embeddings.shape[0], -1, input_embeddings.shape[2]
+                )  # (B, lang_seq_len, llm_dim)
+            except Exception as e:
+                import pdb; pdb.set_trace()
 
             # Get visual features
             projected_patch_embeddings = self._process_vision_features(pixel_values, language_embeddings, use_film)
