@@ -52,7 +52,7 @@ class ActionEncoding(IntEnum):
 
 # === Individual Dataset Configs ===
 OXE_DATASET_CONFIGS = {
-    "panda_simpler_sft_new_dataset":{
+    "panda_simpler_spoon_dataset":{
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None}, # in the save data configuration
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": [],

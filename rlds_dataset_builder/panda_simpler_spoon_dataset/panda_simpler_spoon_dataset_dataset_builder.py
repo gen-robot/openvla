@@ -7,23 +7,21 @@ import tensorflow_datasets as tfds
 from simpler_env import SIMPLER_ROOT_DIR
 
 
-class PandaSimplerSftNewDataset(tfds.core.GeneratorBasedBuilder):
+class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for example dataset."""
 
     VERSION = tfds.core.Version('1.0.0')
     RELEASE_NOTES = {
-        '1.0.0': """only stack cube 200 traj with new collection""",
+        '1.0.0': """panda simpler spoon: 180+20 traj""",
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.path = SIMPLER_ROOT_DIR+"/videos/"
         self.tasks = [
-            "scp/PandaStackGreenCubeOnYellowCubeBakedTexInScene-v1/20250316_150739/data",
-            # "scp/PandaPutSpoonOnTableClothInScene-v1/20250316_151313/data",
-            # "scp/PandaPutCarrotOnPlateInScene-v1/20250316_152846/data",
+            "scp/PandaPutSpoonOnTableClothInScene-v1/20250323_142308/data",
         ]
-        # assert len(self.tasks)==3, "task_num is false."
+        assert len(self.tasks)==1, "task_num is false."
 
     def _info(self) -> tfds.core.DatasetInfo:
         """Dataset metadata (homepage, citation,...)."""
@@ -74,7 +72,7 @@ class PandaSimplerSftNewDataset(tfds.core.GeneratorBasedBuilder):
                     'language_instruction': data['instruction'][0],
                 })
 
-                if data["info"][i]["success"][0]: # fix the bug by bingwen
+                if data["info"][i]["success"][0]:
                     success_count += 1
                 else:
                     success_count = 0
