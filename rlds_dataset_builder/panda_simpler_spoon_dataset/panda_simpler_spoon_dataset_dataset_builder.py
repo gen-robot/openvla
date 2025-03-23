@@ -10,16 +10,16 @@ from simpler_env import SIMPLER_ROOT_DIR
 class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for example dataset."""
 
-    VERSION = tfds.core.Version('1.0.0')
+    VERSION = tfds.core.Version('2.0.0')
     RELEASE_NOTES = {
-        '1.0.0': """panda simpler spoon: 180+20 traj""",
+        '2.0.0': """panda simpler spoon: 180+20 traj for root:root aligned controller mode""",
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.path = SIMPLER_ROOT_DIR+"/videos/"
         self.tasks = [
-            "scp/PandaPutSpoonOnTableClothInScene-v1/20250323_142308/data",
+            "scp/PandaPutSpoonOnTableClothInScene-v1/20250323_191112/data",
         ]
         assert len(self.tasks)==1, "task_num is false."
 
