@@ -169,16 +169,36 @@ break_line}trajectory specified by `trajectory_features`.
 - At the very end of the response, write a single label FINISHED to indicate that the answer is complete."""
 
 
-def find_task_occurrences(input_string, tags):
-    # Create a pattern that can match across multiple lines
-    pattern = r"(\d+):"
-    for tag in tags:
-        # Use [\s\S]*? to match any character (including newlines) in a non-greedy way
-        pattern += r"\s*<" + tag + r">([\s\S]*?)<\/" + tag + r">"
 
-    # Use re.DOTALL to make . match newlines as well
-    matches = re.findall(pattern, input_string, re.DOTALL)
-    return matches
+def find_task_occurrences(input_string, tags):
+    # Initialize an empty list to store all matches
+    all_matches = []
+    # Use a regex pattern to extract each entry's index and content.
+    # This pattern assumes entries are formatted as: number: "text" (optionally followed by a comma)
+    pattern = r'(\d+):\s*"(.*?)"(?:,|$)'
+    entries = re.findall(pattern, input_string, re.DOTALL)
+    
+    for entry_num, entry_content in entries:
+        # Create a dictionary to store this entry's data, starting with its index.
+        entry_data = {'index': entry_num}
+        
+        # For each tag, find all occurrences in the entry's content.
+        for tag in tags:
+            tag_pattern = r'<{0}>(.*?)</{0}>'.format(tag)
+            matches = re.findall(tag_pattern, entry_content, re.DOTALL)
+            if matches:
+                # If only one occurrence was found, store it as a string.
+                # Otherwise, store a list of all occurrences (each stripped of leading/trailing whitespace).
+                if len(matches) == 1:
+                    entry_data[tag] = matches[0].strip()
+                else:
+                    entry_data[tag] = [match.strip() for match in matches]
+            else:
+                entry_data[tag] = None
+        
+        all_matches.append(entry_data)
+    
+    return all_matches
 
 
 def extract_reasoning_dict(reasoning_output, tags=("task", "plan", "subtask", "subtask_reason", "move", "move_reason")):
@@ -191,9 +211,9 @@ def extract_reasoning_dict(reasoning_output, tags=("task", "plan", "subtask", "s
 
     for match in matches:
         # First element is the step number, rest are the tag contents
-        step_num = int(match[0])
-        tag_contents = match[1:]
-        trajectory[step_num] = dict(zip(tags, tag_contents))
+        step_num = int(match['index'])
+        tag_contents = {tag: match[tag] for tag in tags if match[tag] is not None}
+        trajectory[step_num] = tag_contents
 
     return trajectory
 
@@ -205,9 +225,17 @@ def get_reasoning_dict(features, metadata, lm):
     prompt = build_prompt(features, language_instruction, caption=caption, list_only_moves=True)
     print("metadata:", metadata, "\nprompt:", prompt)
 
-    reasoning_output = lm.generate(prompt)
-    import pdb; pdb.set_trace()
-    print("reasoning:", reasoning_output)
+    # reasoning_output = lm.generate(prompt)
+    # # import pdb; pdb.set_trace()
+    # print("reasoning:", reasoning_output)
+
+    # save reasoning output to file
+    with open("reasoning_output.txt", "r") as f:
+        # f.write(reasoning_output)
+        # read the content into a string
+        reasoning_output = ""
+        for line in f:
+            reasoning_output += line
 
     return extract_reasoning_dict(reasoning_output)
 
@@ -278,6 +306,8 @@ def generate_reasonings(builder, episode_ids, save_path="reasonings.json"):
         if isinstance(data, dict):
             return {key: jsonify(value) for key, value in data.items()}
         if isinstance(data, list):
+            return [jsonify(item) for item in data]
+        if isinstance(data, tuple):
             return [jsonify(item) for item in data]
         return data
 

@@ -9,9 +9,11 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+import numpy as np
+
 from prismatic.overwatch import initialize_overwatch
-from prismatic.vla.constants import ACTION_DIM, ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
-from prismatic.vla.datasets.rlds.oxe.configs import OXE_DATASET_CONFIGS, ActionEncoding
+from prismatic.vla.constants import ACTION_PROPRIO_NORMALIZATION_TYPE
+from prismatic.vla.datasets.rlds.oxe.configs import OXE_DATASET_CONFIGS, ActionEncoding, STATE_DIM_MAP, ACTION_DIM_MAP, VALID_DATASET_NAMES
 from prismatic.vla.datasets.rlds.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
 
 # Initialize Overwatch =>> Wraps `logging.Logger`
@@ -28,6 +30,10 @@ def make_oxe_dataset_kwargs(
     action_proprio_normalization_type = ACTION_PROPRIO_NORMALIZATION_TYPE,
 ) -> Dict[str, Any]:
     """Generates config (kwargs) for given dataset from Open-X Embodiment."""
+
+    assert dataset_name.startswith("cobot") or dataset_name in VALID_DATASET_NAMES, \
+        f"Invalid dataset name: {dataset_name}, only {VALID_DATASET_NAMES} are checked for compatibility!"
+
     if dataset_name.startswith("cobot"):
         dataset_kwargs = deepcopy(OXE_DATASET_CONFIGS["cobot_rlds_dataset"])
     else:
@@ -38,11 +44,11 @@ def make_oxe_dataset_kwargs(
     ]:
         # raise ValueError(f"Cannot load `{dataset_name}`; only EEF_POS & EEF_R6 actions supported!")
         print("====================================")
-        print(f"[WARNING] Cannot load `{dataset_name}`; only EEF_POS & EEF_R6 actions supported!")
+        print(f"[WARNING] Cannot load `{dataset_name}`; only EEF_POS | EEF_R6 | JOINT_POS | JOINT_POS_BIMANUAL actions supported!")
         print("====================================")
         import pdb; pdb.set_trace()
 
-    # [Contract] For EEF_POS & EEF_R6 actions, only the last action dimension (gripper) is absolute!
+    # TODO: [Contract] For EEF_POS & EEF_R6 actions, only the last action dimension (gripper) is absolute!
     # Normalize all action dimensions *except* the gripper
     if dataset_kwargs["action_encoding"] is ActionEncoding.EEF_POS:
         dataset_kwargs["absolute_action_mask"] = [False] * 6 + [True]
@@ -53,9 +59,6 @@ def make_oxe_dataset_kwargs(
     elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS:
         dataset_kwargs["absolute_action_mask"] = [True] * 8
         dataset_kwargs["action_normalization_mask"] = [True] * 8
-    # elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS_BIMANUAL:
-    #     dataset_kwargs["absolute_action_mask"] = [False] * 6 + [True] + [False] * 6 + [True]
-    #     dataset_kwargs["action_normalization_mask"] = [True] * 6 + [False] + [True] * 6 + [False]
     elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS_BIMANUAL:
         dataset_kwargs["absolute_action_mask"] = [True] * 14
         dataset_kwargs["action_normalization_mask"] = [True] * 14
@@ -68,11 +71,14 @@ def make_oxe_dataset_kwargs(
 
     # Filter
     dataset_kwargs["image_obs_keys"] = {
-        k: v for k, v in dataset_kwargs["image_obs_keys"].items() if k in load_camera_views
+        k: v for k, v in dataset_kwargs["image_obs_keys"].items() if k in load_camera_views and v is not None
     }
     dataset_kwargs["depth_obs_keys"] = {
-        k: v for k, v in dataset_kwargs["depth_obs_keys"].items() if k in load_camera_views
+        k: v for k, v in dataset_kwargs["depth_obs_keys"].items() if k in load_camera_views and v is not None
     }
+
+    dataset_kwargs["state_dim"] = STATE_DIM_MAP[dataset_kwargs["state_encoding"]]
+    dataset_kwargs["action_dim"] = ACTION_DIM_MAP[dataset_kwargs["action_encoding"]]
 
     # Eliminate Unnecessary Keys
     dataset_kwargs.pop("state_encoding")
@@ -131,6 +137,8 @@ def get_oxe_dataset_kwargs_and_weights(
         included_datasets.add(d_name)
         filtered_mixture_spec.append((d_name, d_weight))
 
+    MAX_ACTION_DIM = -np.inf
+
     # Assemble Dataset Config (kwargs) and Weights
     per_dataset_kwargs, sampling_weights = [], []
     for d_name, d_weight in filtered_mixture_spec:
@@ -139,7 +147,7 @@ def get_oxe_dataset_kwargs_and_weights(
                 make_oxe_dataset_kwargs(
                     d_name,
                     data_root_dir,
-                    load_camera_views,
+                    load_camera_views[d_name],
                     load_depth,
                     load_proprio,
                     load_language,
@@ -147,8 +155,8 @@ def get_oxe_dataset_kwargs_and_weights(
                 )
             )
             sampling_weights.append(d_weight)
-
+            MAX_ACTION_DIM = max(MAX_ACTION_DIM, per_dataset_kwargs[-1]["action_dim"])
         except ValueError as e:
             overwatch.warning(f"Skipping `{d_name}` due to Error: {e}")
 
-    return per_dataset_kwargs, sampling_weights
+    return per_dataset_kwargs, sampling_weights, MAX_ACTION_DIM

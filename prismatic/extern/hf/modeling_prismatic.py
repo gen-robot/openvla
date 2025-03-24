@@ -405,6 +405,8 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         Returns:
             Modified input_embeddings tensor
         """
+        # TODO: can we use diffusion with autoregressive decoding?
+
         # Clone input to avoid modifying the original tensor
         new_input_embeddings = input_embeddings.clone()
 
@@ -601,6 +603,9 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                     input_embeddings.shape[0], -1, input_embeddings.shape[2]
                 )  # (B, lang_seq_len, llm_dim)
             except Exception as e:
+                print(f"Error: {e}")
+                print(f"input_embeddings.shape: {input_embeddings.shape}")
+                print(f"all_actions_mask.shape: {all_actions_mask.shape}")
                 import pdb; pdb.set_trace()
 
             # Get visual features
@@ -639,11 +644,14 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                 input_embeddings = self._replace_input_embeddings(
                     input_embeddings, all_actions_mask, noisy_action_features
                 )
-            else:
+            elif getattr(self, "use_pd", False):
                 # Replace the embeddings of the action tokens with zeros
                 # (Later on, the positional embeddings will be added to them)
                 all_actions_mask = all_actions_mask.unsqueeze(-1)  # (B, seq_len, 1)
                 input_embeddings = input_embeddings * ~all_actions_mask
+            else:
+                # if not using pd, just use the input embeddings which will be causally masked
+                pass
 
             # Build multimodal embeddings & attention mask
             multimodal_embeddings, multimodal_attention_mask = self._build_multimodal_attention(
@@ -740,7 +748,10 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
     # Defer to Language Model (all handle this differently, with different return types)
     def _reorder_cache(self, *args, **kwargs) -> Any:
         return self.language_model._reorder_cache(*args, **kwargs)
-
+    
+    def enable_parallel_decoding(self):
+        self.use_pd = True
+        self.language_model.model.enable_parallel_decoding()
 
 class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
     config_class: PretrainedConfig = OpenVLAConfig
@@ -1117,3 +1128,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         """Get all the logged statistics for the given dataset."""
         unnorm_key = self._check_unnorm_key(self.norm_stats, unnorm_key)
         return self.norm_stats[unnorm_key]["action"]
+
+    def enable_parallel_decoding(self):
+        self.use_pd = True
+        super().enable_parallel_decoding()

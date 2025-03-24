@@ -22,13 +22,9 @@ from prismatic.util.cot_utils import CotTag, abbreviate_tag
 from prismatic.util.data_utils import tree_map
 from prismatic.vla.action_tokenizer import ActionTokenizer
 from prismatic.vla.constants import (
-    ACTION_DIM,
     ACTION_PROPRIO_NORMALIZATION_TYPE,
-    ACTION_TOKEN_BEGIN_IDX,
     IGNORE_INDEX,
     NUM_ACTIONS_CHUNK,
-    PROPRIO_DIM,
-    STOP_INDEX,
 )
 from prismatic.vla.datasets.rlds import make_interleaved_dataset, make_single_dataset
 from prismatic.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
@@ -72,7 +68,7 @@ class RLDSBatchTransform:
     use_proprio: bool = False
     history_size: int = 0
     print_prompt_limit: int = 20
-    reasoning_dropout_prob: float = 0.2
+    reasoning_dropout_prob: float = 0.0
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
@@ -105,14 +101,14 @@ class RLDSBatchTransform:
 
         if len(reasoning) > 0:
             conversation = [
-                {"from": "human", "value": f"What action should the robot take to {lang}? Explain why with {subset}."},
+                {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
                 # {"from": "human", "value": f"What action should the robot take to {lang}?"},
                 {"from": "gpt", "value": f"{reasoning} {CotTag.ACTION.value} {action_chunk_string}"},
             ]
         else:
             conversation = [
                 {"from": "human", "value": f"What action should the robot take to {lang}?"},
-                {"from": "gpt", "value": f"{action_chunk_string}"},
+                {"from": "gpt", "value": f"{CotTag.ACTION.value} {action_chunk_string}"},
             ]
 
         for turn in conversation:
@@ -153,7 +149,6 @@ class RLDSBatchTransform:
             print("*" * 50)
             self.print_prompt_limit -= 1
 
-        # import pdb; pdb.set_trace()
         # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
         #   =>> IMPORTANT :: IF WE'RE USING HF LLM.forward(..., labels=labels), SHIFTING HAPPENS _INSIDE_ MODEL!
         pixel_values = self.image_transform(img)
@@ -216,14 +211,16 @@ class RLDSDataset(IterableDataset):
             mixture_spec = [(self.data_mix, 1.0)]
 
         # fmt: off
-        if "aloha" in self.data_mix or "cobot" in self.data_mix:
-            load_camera_views = ("primary", "left_wrist", "right_wrist")
-        elif "bridge" in self.data_mix:
-            load_camera_views = ("primary",)
-        else:
-            load_camera_views = ("primary", "wrist")
+        load_camera_views = dict()
+        for name, _ in mixture_spec:
+            if "aloha" in name or "cobot" in name:
+                load_camera_views[name] = ("primary", "left_wrist", "right_wrist")
+            elif "bridge" in name:
+                load_camera_views[name] = ("primary",)
+            else:
+                load_camera_views[name] = ("primary",)
 
-        per_dataset_kwargs, weights = get_oxe_dataset_kwargs_and_weights(
+        per_dataset_kwargs, weights, MAX_ACTION_DIM = get_oxe_dataset_kwargs_and_weights(
             self.data_root_dir,
             mixture_spec,
             load_camera_views=load_camera_views,
@@ -261,6 +258,7 @@ class RLDSDataset(IterableDataset):
             traj_transform_threads=len(mixture_spec),
             traj_read_threads=len(mixture_spec),
             train=train,
+            max_action_dim=MAX_ACTION_DIM,
         )
 
         print("RLDS Config: ", rlds_config)

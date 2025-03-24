@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
-from prismatic.vla.constants import ACTION_DIM, ACTION_TOKEN_BEGIN_IDX, IGNORE_INDEX, NUM_ACTIONS_CHUNK, PROPRIO_DIM, STOP_INDEX
+from prismatic.vla.constants import ACTION_DIM
 
 
 class SinusoidalPositionalEncoding(nn.Module):
@@ -164,7 +164,7 @@ class DiffusionActionHead(nn.Module):
         self.action_dim = action_dim
         self.num_actions_chunk = num_actions_chunk
         self.noise_predictor = NoisePredictionModel(
-            transformer_hidden_dim=hidden_dim*ACTION_DIM, hidden_dim=hidden_dim, action_dim=action_dim
+            transformer_hidden_dim=hidden_dim*self.action_dim, hidden_dim=hidden_dim, action_dim=self.action_dim
         )
         self.noise_scheduler = DDIMScheduler(num_train_timesteps=num_diffusion_steps, beta_schedule="squaredcos_cap_v2")
         self.num_diffusion_steps = num_diffusion_steps

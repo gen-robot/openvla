@@ -185,6 +185,8 @@ def get_run_id(cfg) -> str:
             run_id += f"+lora-r{cfg.lora_rank}+dropout-{cfg.lora_dropout}"
         if cfg.image_aug:
             run_id += "+image_aug"
+        if cfg.num_actions_chunk is not None:
+            run_id += f"+chunk-{cfg.num_actions_chunk}"
         if cfg.run_id_note is not None:
             run_id += f"+{cfg.run_id_note}"
         if cfg.use_film:
@@ -199,8 +201,6 @@ def get_run_id(cfg) -> str:
             run_id += f"+img-{cfg.num_images_in_input}"
         if cfg.window_size is not None:
             run_id += f"+ws-{cfg.window_size}"
-        if cfg.future_action_window_size is not None:
-            run_id += f"+fas-{cfg.future_action_window_size}"
         if cfg.use_parallel_decoding:
             run_id += "+pd"
         if cfg.enable_cot:
@@ -386,7 +386,7 @@ def run_forward_pass(
         action_token_begin_idx=action_tokenizer.action_token_begin_idx)
 
     # if text_mask is not all False
-    if (use_l1_regression or use_diffusion) and text_mask.any():
+    if text_mask.any():
         _shape = ground_truth_token_ids.shape
         predicted_logits = output.logits[:, num_patches:-1]
         flatten_predicted_logits = predicted_logits.reshape(-1, predicted_logits.shape[-1])
@@ -395,7 +395,7 @@ def run_forward_pass(
             flatten_predicted_logits, flatten_ground_truth_token_ids, 
             reduction="none")
         text_loss = text_loss.reshape(_shape) * text_mask
-        balance_weight = 0.01 if use_l1_regression else 0.1 # TODO: check these values
+        balance_weight = 0.5 if use_l1_regression else 1 # TODO: check these values
         text_loss = text_loss.mean() * balance_weight # cross_entropy loss is about 100x/10x larger than the l1/diffusion loss
         metrics.update({"text_loss_value": text_loss.item(),})
     else:
@@ -422,21 +422,26 @@ def run_forward_pass(
         curr_action_l1_loss = compute_actions_l1_loss(
             action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
         )
-        next_actions_accuracy = compute_token_accuracy(
-            predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask
-        )
-        next_actions_l1_loss = compute_actions_l1_loss(
-            action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask
-        )
         metrics.update(
             {
                 "loss_value": loss.item(),  # Detached value for logging
                 "curr_action_accuracy": curr_action_accuracy.item(),
                 "curr_action_l1_loss": curr_action_l1_loss.item(),
-                "next_actions_accuracy": next_actions_accuracy.item(),
-                "next_actions_l1_loss": next_actions_l1_loss.item(),
             }
         )
+        if next_actions_mask.any():
+            next_actions_accuracy = compute_token_accuracy(
+                predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask
+            )
+            next_actions_l1_loss = compute_actions_l1_loss(
+                action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask
+            )
+            metrics.update(
+                {
+                    "next_actions_accuracy": next_actions_accuracy.item(),
+                    "next_actions_l1_loss": next_actions_l1_loss.item(),
+                }
+            )
     # Compute metrics for continuous action representations (L1 regression | diffusion)
     else:
         # Get last layer hidden states
@@ -506,7 +511,8 @@ def run_forward_pass(
                 }
             )
 
-    loss = loss + text_loss
+        # if still using next-token prediction, text loss is already included in loss, so only add it if not using next-token prediction
+        loss = loss + text_loss
 
     # Return both the loss tensor (with gradients) and the metrics dictionary (with detached values)
     return loss, metrics
@@ -843,7 +849,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     Returns:
         None.
     """
-    assert cfg.use_lora, "Only LoRA fine-tuning is supported. Please set --use_lora=True!"
+    # assert cfg.use_lora, "Only LoRA fine-tuning is supported. Please set --use_lora=True!"
     assert not (cfg.use_l1_regression and cfg.use_diffusion), (
         "Cannot do both L1 regression and diffusion. Please pick one of them!"
     )
@@ -860,7 +866,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         num_actions_chunk = cfg.num_actions_chunk
     else:
         cfg.future_action_window_size = None
-        num_actions_chunk = NUM_ACTIONS_CHUNK
+        num_actions_chunk = cfg.num_actions_chunk = NUM_ACTIONS_CHUNK
 
     # Get experiment run ID
     run_id = get_run_id(cfg) if not cfg.is_debug else "debug"
@@ -949,6 +955,10 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Set number of images in VLA input
     vla.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
+    vla.set_output_format(num_actions_chunk, ACTION_DIM)
+
+    if cfg.use_parallel_decoding:
+        vla.enable_parallel_decoding()
 
     # LoRA setup
     if cfg.use_lora:
@@ -980,12 +990,6 @@ def finetune(cfg: FinetuneConfig) -> None:
             vla_model.vision_backbone.load_state_dict(state_dict)
         vla_model.vision_backbone = vla_model.vision_backbone.to(device_id)
 
-    if cfg.use_parallel_decoding:
-        llm_model = vla.model.language_model if cfg.use_lora else vla.language_model
-        print("Current attention implementation inside {}: {}".format(
-            llm_model.__class__.__name__, llm_model.model._attn_implementation))
-        assert llm_model.model._attn_implementation == "sdpa", "Only SDPA attention is supported for parallel decoding!"
-        llm_model.model.enable_parallel_decoding()
 
     # Wrap VLA with DDP
     vla = wrap_ddp(vla, device_id, find_unused=True)

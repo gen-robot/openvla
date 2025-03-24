@@ -20,6 +20,8 @@ def chunk_act_obs(traj: Dict, window_size: int, future_action_window_size: int =
     * "action" is given a new axis (at index 1) of size `window_size + future_action_window_size` containing `window_size - 1` actions from the past, the current action, and `future_action_window_size` actions from the future.
     * "pad_mask" is added to "observation" and indicates whether an observation should be considered padding (i.e. if it had come from a timestep before the start of the trajectory).
     """
+
+    # FIXME: we should not ignore the last future_action_window_size steps, padding last obs/actions with proper values according to the absolute_action_mask
     traj_len = tf.shape(traj["action"])[0]
     action_dim = traj["action"].shape[-1]
     effective_traj_len = traj_len - future_action_window_size

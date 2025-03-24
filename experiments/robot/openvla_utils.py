@@ -733,6 +733,7 @@ def get_vla_action(
     proprio_projector: Optional[torch.nn.Module] = None,
     noisy_action_projector: Optional[torch.nn.Module] = None,
     use_film: bool = False,
+    do_sample: bool = False,
 ) -> List[np.ndarray]:
     """
     Generate action predictions with the VLA policy.
@@ -791,13 +792,21 @@ def get_vla_action(
         # Generate action
         if action_head is None:
             # Standard VLA output (single-image inputs, discrete actions)
-            action, _ = vla.predict_action(**inputs, unnorm_key=cfg.unnorm_key, do_sample=False)
+            action, _ = vla.predict_action(
+                **inputs, 
+                unnorm_key=cfg.unnorm_key, 
+                do_sample=do_sample,
+                proprio=proprio,
+                proprio_projector=proprio_projector,
+                noisy_action_projector=noisy_action_projector,
+                use_film=use_film,
+            )
         else:
             # Custom action head for continuous actions
             action, _ = vla.predict_action(
                 **inputs,
                 unnorm_key=cfg.unnorm_key,
-                do_sample=False,
+                do_sample=do_sample,
                 proprio=proprio,
                 proprio_projector=proprio_projector,
                 noisy_action_projector=noisy_action_projector,

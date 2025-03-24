@@ -147,20 +147,20 @@ SYSTEM_PROMPT = (
 def get_openvla_prompt(instruction: str) -> str:
     return f"{SYSTEM_PROMPT} USER: What action should the robot take to {instruction.lower()}? ASSISTANT: TASK:"
 
-episode_path_template = "/nvme_data/embodied_agent/cot_cobot_data/wipe_the_board/episode_{}.hdf5"
-episode_path = episode_path_template.format(1)
-with open(os.path.dirname(episode_path) + "/expanded_instruction_gpt-4-turbo.json", "r") as f:
-    INSTRUCTION = json.load(f)["expanded_instruction"][0]
+# episode_path_template = "/nvme_data/embodied_agent/cot_cobot_data/wipe_the_board/episode_{}.hdf5"
+# episode_path = episode_path_template.format(1)
+# with open(os.path.dirname(episode_path) + "/expanded_instruction_gpt-4-turbo.json", "r") as f:
+#     INSTRUCTION = json.load(f)["expanded_instruction"][0]
 
-prompt = get_openvla_prompt(INSTRUCTION)
-print(prompt.replace(". ", ".\n"))
+# prompt = get_openvla_prompt(INSTRUCTION)
+# print(prompt.replace(". ", ".\n"))
 
-episode_data = h5py.File(episode_path, "r")
-# import pdb; pdb.set_trace()
-images = episode_data["observations"]["images"]["cam_high"]
-image = cv2.imdecode(np.frombuffer(images[-100], np.uint8), cv2.IMREAD_COLOR)
-# convert image to PIL image
-image = Image.fromarray(image)
+# episode_data = h5py.File(episode_path, "r")
+# # import pdb; pdb.set_trace()
+# images = episode_data["observations"]["images"]["cam_high"]
+# image = cv2.imdecode(np.frombuffer(images[-100], np.uint8), cv2.IMREAD_COLOR)
+# # convert image to PIL image
+# image = Image.fromarray(image)
 
 # Run inference
 inputs = processor(prompt, image).to(device, dtype=torch.bfloat16)

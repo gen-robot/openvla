@@ -68,6 +68,7 @@ def make_dataset_from_rlds(
     num_parallel_calls: int = tf.data.AUTOTUNE,
     enable_cot: bool = False,
     reasoning_dataset_path: str = f"{os.environ['HOME']}/.cache/reasonings_dataset.json",
+    **kwargs,
 ) -> Tuple[dl.DLataset, dict]:
     """
     This function is responsible for loading a specific RLDS dataset from storage and getting it into a standardized
@@ -143,7 +144,9 @@ def make_dataset_from_rlds(
     if language_key is not None:
         REQUIRED_KEYS.add(language_key)
 
-    if enable_cot:
+    load_cot_labels = ('bridge' in name) and enable_cot
+
+    if load_cot_labels:
         if os.path.isfile(reasoning_dataset_path):
             print(f"Loading from local checkpoint path `{reasoning_dataset_path}`.")
         else:
@@ -164,7 +167,7 @@ def make_dataset_from_rlds(
     else:
         reasoning_dataset = None
 
-    def restructure(traj):
+    def restructure(traj, load_cot_labels=False):
         # apply a standardization function, if provided
         if standardize_fn is not None:
             traj = standardize_fn(traj)
@@ -215,7 +218,7 @@ def make_dataset_from_rlds(
                 )
             task["language_instruction"] = traj.pop(language_key)
 
-        if enable_cot and 'episode_id' in traj["traj_metadata"]["episode_metadata"]:
+        if load_cot_labels and 'episode_id' in traj["traj_metadata"]["episode_metadata"]:
             file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
             episode_id = traj["traj_metadata"]["episode_metadata"]["episode_id"][0]
 
@@ -232,8 +235,8 @@ def make_dataset_from_rlds(
             "action": tf.cast(traj["action"], tf.float32),
             "dataset_name": tf.repeat(name, traj_len),
         }
-        if enable_cot:
-            traj["reasoning"] = reasonings
+        # if load_cot_labels:
+        traj["reasoning"] = reasonings
 
         if absolute_action_mask is not None:
             if len(absolute_action_mask) != traj["action"].shape[-1]:
@@ -257,7 +260,9 @@ def make_dataset_from_rlds(
     elif dataset_statistics is None:
         full_dataset = dl.DLataset.from_rlds(
             builder, split="all", shuffle=False, num_parallel_reads=num_parallel_reads
-        ).traj_map(restructure, num_parallel_calls)
+        ).traj_map(
+            partial(restructure, load_cot_labels=load_cot_labels), 
+            num_parallel_calls)
         # tries to load from cache, otherwise computes on the fly
         dataset_statistics = get_dataset_statistics(
             full_dataset,
@@ -287,7 +292,10 @@ def make_dataset_from_rlds(
 
     dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=shuffle, num_parallel_reads=num_parallel_reads)
 
-    dataset = dataset.traj_map(restructure, num_parallel_calls)
+    dataset = dataset.traj_map(
+        partial(restructure, load_cot_labels=load_cot_labels),
+        num_parallel_calls,
+    )
     dataset = dataset.traj_map(
         partial(
             normalize_action_and_proprio,
@@ -516,6 +524,7 @@ def make_interleaved_dataset(
     traj_transform_threads: Optional[int] = None,
     traj_read_threads: Optional[int] = None,
     enable_cot: bool = False,
+    max_action_dim: Optional[int] = None,
 ) -> dl.DLataset:
     """
     Creates an interleaved dataset from list of dataset configs (kwargs). Returns a dataset of batched frames.

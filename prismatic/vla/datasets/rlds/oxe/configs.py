@@ -29,6 +29,13 @@ from enum import IntEnum
 from prismatic.vla.datasets.rlds.oxe.utils.droid_utils import zero_action_filter
 
 
+# FIXME: delta or absolute??? these definitions should be consistent for different datasets
+# FIXME: these configs should be carefully checked. currently, they are heavily hard-coded some inconsistent parts
+# Previous:
+#   StateEncoding.POS_EULER:    EEF XYZ (3) + Roll-Pitch-Yaw (3) + <PAD> (1) + Gripper Open/Close (1)
+# Current:
+#   StateEncoding.POS_EULER:    EEF XYZ (3) + Roll-Pitch-Yaw (3) + Gripper Open/Close (1)
+
 # Defines Proprioceptive State Encoding Schemes
 class StateEncoding(IntEnum):
     # fmt: off
@@ -47,38 +54,72 @@ class ActionEncoding(IntEnum):
     JOINT_POS = 2           # Joint Delta Position (7) + Gripper Open/Close (1)
     JOINT_POS_BIMANUAL = 3  # Joint Delta Position (2 x [ Joint Delta Position (6) + Gripper Open/Close (1) ])
     EEF_R6 = 4              # EEF Delta XYZ (3) + R6 (6) + Gripper Open/Close (1)
+    SIX_DOF_JOINT_POS = 5   # Joint Delta Position (6) + Gripper Open/Close (1)
     # fmt: on
 
+STATE_DIM_MAP = {
+    StateEncoding.NONE: 0,
+    StateEncoding.POS_EULER: 8,                     # EEF XYZ (3) + Roll-Pitch-Yaw (3) + Gripper Open/Close (1)
+    StateEncoding.POS_QUAT: 8,                      # EEF XYZ (3) + Quaternion (4) + Gripper Open/Close (1)
+    StateEncoding.JOINT: 8,                         # Joint Angles (7) + Gripper Open/Close (1)
+    StateEncoding.JOINT_BIMANUAL: 14,               # Joint Angles (2 x [ Joint Angles (6) + Gripper Open/Close (1) ])
+}
+
+# Map the action encoding to the action dimension number
+ACTION_DIM_MAP = {
+    ActionEncoding.EEF_POS: 7,                       # EEF Delta XYZ (3) + Roll-Pitch-Yaw (3) + Gripper Open/Close (1)
+    ActionEncoding.JOINT_POS: 8,                     # Joint Delta Position (7) + Gripper Open/Close (1)
+    ActionEncoding.JOINT_POS_BIMANUAL: 14,           # Joint Delta Position (2 x [ Joint Delta Position (6) + Gripper Open/Close (1) ])
+    ActionEncoding.EEF_R6: 10,                       # EEF Delta XYZ (3) + R6 (6) + Gripper Open/Close (1)
+    ActionEncoding.SIX_DOF_JOINT_POS: 7,             # Joint Delta Position (6) + Gripper Open/Close (1)
+}
+
+VALID_DATASET_NAMES = [
+    "mani_skill_rlds_dataset",
+    "cobot_rlds_dataset",
+    "bridge_orig",
+    "bridge_oxe",
+    "bridge_dataset",
+    "fractal20220817_data",
+    "bc_z",
+]
 
 # === Individual Dataset Configs ===
 OXE_DATASET_CONFIGS = {
     "mani_skill_rlds_dataset": {
         "image_obs_keys": {"primary": "image_primary", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["qpos"],
+        "state_obs_keys": ["qpos"], # 14-dim
         "state_encoding": StateEncoding.JOINT,
         "action_encoding": ActionEncoding.JOINT_POS,
-    },
-    "example_dataset": {
-        "image_obs_keys": {"primary": "image_primary", "secondary": None, "wrist": None},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state"],
-        "state_encoding": StateEncoding.JOINT,
-        "action_encoding": ActionEncoding.EEF_POS,
-    },
-    "cobot_future_dataset": {
-        "image_obs_keys": {"primary": "cam_high", "secondary": None, "left_wrist": "cam_left_wrist", "right_wrist": "cam_right_wrist"},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["qpos"],
-        "state_encoding": StateEncoding.JOINT_BIMANUAL,
-        "action_encoding": ActionEncoding.JOINT_POS_BIMANUAL,
     },
     "cobot_rlds_dataset": {
         "image_obs_keys": {"primary": "cam_high", "secondary": None, "left_wrist": "cam_left_wrist", "right_wrist": "cam_right_wrist"},
         "depth_obs_keys": {"primary": None, "secondary": None, "left_wrist": None, "right_wrist": None},
-        "state_obs_keys": ["qpos"],
+        "state_obs_keys": ["qpos"], # 14-dim
         "state_encoding": StateEncoding.JOINT_BIMANUAL,
         "action_encoding": ActionEncoding.JOINT_POS_BIMANUAL,
+    },
+    "bridge_oxe": {  # Version of Bridge V2 in Open X-Embodiment mixture
+        "image_obs_keys": {"primary": "image", "secondary": "image_1", "wrist": None},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["EEF_state", None, "gripper_state"],
+        "state_encoding": StateEncoding.POS_EULER,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "bridge_orig": {  # Original version of Bridge V2 from project website
+        "image_obs_keys": {"primary": "image_0", "secondary": "image_1", "wrist": None},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["EEF_state", None, "gripper_state"],
+        "state_encoding": StateEncoding.POS_EULER,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "bridge_dataset": {  # Original version of Bridge V2 from project website
+        "image_obs_keys": {"primary": "image_0", "secondary": "image_1", "wrist": None},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["EEF_state", None, "gripper_state"],
+        "state_encoding": StateEncoding.POS_EULER,
+        "action_encoding": ActionEncoding.EEF_POS,
     },
     "fractal20220817_data": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
@@ -87,6 +128,22 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": StateEncoding.POS_QUAT,
         "action_encoding": ActionEncoding.EEF_POS,
     },
+    "bc_z": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": [
+            "present/xyz",
+            "present/axis_angle",
+            None,
+            "present/sensed_close",
+        ],
+        "state_encoding": StateEncoding.POS_EULER,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    ####################################################################
+    # The following configs may cause errors, since they have not been #
+    # checked for compatibility with the current codebase              #
+    ####################################################################
     "kuka": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
@@ -95,27 +152,6 @@ OXE_DATASET_CONFIGS = {
             "gripper_closed",
         ],
         "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.EEF_POS,
-    },
-    "bridge_oxe": {  # Version of Bridge V2 in Open X-Embodiment mixture
-        "image_obs_keys": {"primary": "image", "secondary": "image_1", "wrist": None},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["EEF_state", "gripper_state"],
-        "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
-    },
-    "bridge_orig": {  # Original version of Bridge V2 from project website
-        "image_obs_keys": {"primary": "image_0", "secondary": "image_1", "wrist": None},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["EEF_state", "gripper_state"],
-        "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
-    },
-    "bridge_dataset": {  # Original version of Bridge V2 from project website
-        "image_obs_keys": {"primary": "image_0", "secondary": "image_1", "wrist": None},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["EEF_state", "gripper_state"],
-        "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
     },
     "taco_play": {
@@ -338,18 +374,6 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["state"],
         "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.EEF_POS,
-    },
-    "bc_z": {
-        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": [
-            "present/xyz",
-            "present/axis_angle",
-            None,
-            "present/sensed_close",
-        ],
-        "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
     },
     "utokyo_pr2_opening_fridge_converted_externally_to_rlds": {

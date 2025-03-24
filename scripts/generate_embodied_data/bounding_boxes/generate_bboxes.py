@@ -17,8 +17,10 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("--id", type=int)
 parser.add_argument("--gpu", type=int)
-parser.add_argument("--splits", default=24)
-parser.add_argument("--data-path", type=str)
+parser.add_argument("--splits", default=4)
+parser.add_argument("--dataset-dir", type=str)
+parser.add_argument("--dataset-name", type=str)
+parser.add_argument("--reasoning-path", type=str, default="../reasonings.json")
 parser.add_argument("--result-path", default="./bboxes")
 
 args = parser.parse_args()
@@ -29,11 +31,11 @@ split_percents = 100 // args.splits
 start = args.id * split_percents
 end = (args.id + 1) * split_percents
 
-ds = tfds.load("bridge_orig", data_dir=args.data_path, split=f"train[{start}%:{end}%]")
+ds = tfds.load(args.dataset_name, data_dir=args.dataset_dir, split=f"train[{start}%:{end}%]")
 print("Done.")
 
 print("Loading Prismatic descriptions...")
-results_json_path = "./descriptions/full_descriptions.json"
+results_json_path = args.reasoning_path
 with open(results_json_path, "r") as f:
     results_json = json.load(f)
 print("Done.")
@@ -52,7 +54,7 @@ TEXT_THRESHOLD = 0.2
 bbox_results_json = {}
 for ep_idx, episode in enumerate(ds):
 
-    episode_id = episode["episode_metadata"]["episode_id"].numpy()
+    episode_id = '86' #episode["episode_metadata"]["episode_id"].numpy()
     file_path = episode["episode_metadata"]["file_path"].numpy().decode()
     print(f"ID {args.id} starting ep: {episode_id}, {file_path}")
 
@@ -60,6 +62,7 @@ for ep_idx, episode in enumerate(ds):
         bbox_results_json[file_path] = {}
 
     episode_json = results_json[file_path][str(episode_id)]
+    import pdb; pdb.set_trace()
     description = episode_json["caption"]
 
     start = time.time()
