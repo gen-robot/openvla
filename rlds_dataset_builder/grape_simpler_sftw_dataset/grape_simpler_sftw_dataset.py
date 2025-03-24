@@ -18,10 +18,10 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
         super().__init__(*args, **kwargs)
         self.path = "../../../SimplerEnv/videos/collect"
         self.tasks = [
-            "octo-small_PutSpoonOnTableClothInScene-v1",
+            # "octo-small_PutSpoonOnTableClothInScene-v1",
             "octo-small_PutCarrotOnPlateInScene-v1",
-            "octo-small_StackGreenCubeOnYellowCubeBakedTexInScene-v1",
-            "octo-small_PutEggplantInBasketScene-v1",
+            # "octo-small_StackGreenCubeOnYellowCubeBakedTexInScene-v1",
+            # "octo-small_PutEggplantInBasketScene-v1",
         ]
 
     def _info(self) -> tfds.core.DatasetInfo:
@@ -66,7 +66,7 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
 
                 episode.append({
                     'observation': {
-                        'image': np.asarray(data["image"][i - 1]),
+                        'image': np.asarray(data["image"][i - 1]), # bug: hack
                     },
                     'action': data["action"][i],
                     'language_instruction': data['instruction'],
@@ -108,4 +108,4 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             sample = _parse_example(ep_path)
             yield ep_path, sample
 
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_sft_dataset_268
+# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_sft_dataset_pc73

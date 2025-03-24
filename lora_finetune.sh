@@ -1,4 +1,4 @@
-task_name="grape_simpler_sft_dataset_268"
+task_name="grape_simpler_sft_dataset_pc73"
 
 CUDA_VISIBLE_DEVICES=3,4,5,7 \
 torchrun --standalone --nnodes 1 --nproc-per-node 4 vla-scripts/finetune_distributed.py \
@@ -8,12 +8,12 @@ torchrun --standalone --nnodes 1 --nproc-per-node 4 vla-scripts/finetune_distrib
   --run_root_dir checkpoints/${task_name} \
   --lora_rank 32 \
   --batch_size 20 \
-  --max_steps 4000 \
+  --max_steps 2000 \
   --save_steps 50 \
   --grad_accumulation_steps 1 \
   --learning_rate 5e-4 \
   --image_aug True \
-  --wandb_project RLVLA \
+  --wandb_project "RLVLA_sft" \
   --wandb_entity hosnls
 
 #mv checkpoints/grape_simpler_sft checkpoints/grape_simpler_sft_dataset

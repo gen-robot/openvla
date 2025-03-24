@@ -66,6 +66,13 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": StateEncoding.NONE,
         "action_encoding": ActionEncoding.EEF_POS,
     },
+    "grape_simpler_sft_dataset_pc73":{
+        "image_obs_keys": {"primary": "image"},
+        "depth_obs_keys": {},
+        "state_obs_keys": [],
+        "state_encoding": StateEncoding.NONE,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
     "grape_simpler_dpos_dataset":{
         "image_obs_keys": {"primary": "image"},
         "depth_obs_keys": {},
