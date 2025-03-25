@@ -63,8 +63,8 @@ for episode in tqdm(ds):
     episode_id = episode["episode_metadata"]["episode_id"].numpy()
     file_path = episode["episode_metadata"]["file_path"].numpy().decode()
     for step in episode["steps"]:
-        lang_instruction = step["instruction"].numpy().decode()
-        image = Image.fromarray(step["observation"]["cam_high"].numpy())
+        lang_instruction = step["language_instruction"].numpy().decode()
+        image = Image.fromarray(step["observation"]["image_0"].numpy())
 
         # user_prompt = "Describe the objects in this scene. Be specific."
         user_prompt = create_user_prompt(lang_instruction)

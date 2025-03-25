@@ -28,6 +28,7 @@ from prismatic.models.action_heads import DiffusionActionHead, L1RegressionActio
 from prismatic.models.film_vit_wrapper import FiLMedPrismaticVisionBackbone
 from prismatic.models.projectors import NoisyActionProjector, ProprioProjector
 from prismatic.vla.constants import (
+    NUM_ACTIONS_CHUNK,
     ACTION_DIM,
     ACTION_PROPRIO_NORMALIZATION_TYPE,
 )
@@ -301,15 +302,22 @@ def get_vla(cfg: Any) -> torch.nn.Module:
     if cfg.use_film:
         vla = _apply_film_to_vla(vla, cfg)
 
+    if cfg.future_action_window_size is not None:
+        num_actions_chunk = cfg.future_action_window_size + 1
+    else:
+        num_actions_chunk = NUM_ACTIONS_CHUNK
+
     # Set number of images in model input
     vla.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
+    vla.set_output_format(num_actions_chunk, ACTION_DIM)
 
     if cfg.use_parallel_decoding:
-        llm_model = vla.language_model
-        print("Current attention implementation inside {}: {}".format(
-            llm_model.__class__.__name__, llm_model.model._attn_implementation))
-        assert llm_model.model._attn_implementation == "sdpa", "Only SDPA attention is supported for parallel decoding!"
-        llm_model.model.enable_parallel_decoding()
+        # llm_model = vla.language_model
+        # print("Current attention implementation inside {}: {}".format(
+        #     llm_model.__class__.__name__, llm_model.model._attn_implementation))
+        # assert llm_model.model._attn_implementation == "sdpa", "Only SDPA attention is supported for parallel decoding!"
+        # llm_model.model.enable_parallel_decoding()
+        vla.enable_parallel_decoding()
 
     vla.eval()
 

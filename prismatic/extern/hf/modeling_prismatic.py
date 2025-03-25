@@ -597,16 +597,22 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             # Extract action masks
             all_actions_mask = self._process_action_masks(labels)
             
-            try:
-                # Extract the language portion of the input embeddings (i.e. remove the action tokens portion)
-                language_embeddings = input_embeddings[~all_actions_mask].reshape(
-                    input_embeddings.shape[0], -1, input_embeddings.shape[2]
-                )  # (B, lang_seq_len, llm_dim)
-            except Exception as e:
-                print(f"Error: {e}")
-                print(f"input_embeddings.shape: {input_embeddings.shape}")
-                print(f"all_actions_mask.shape: {all_actions_mask.shape}")
-                import pdb; pdb.set_trace()
+            if not use_film:
+                language_embeddings = None
+            else:
+                try:
+                    # Extract the language portion of the input embeddings (i.e. remove the action tokens portion)
+                    language_embeddings = input_embeddings[~all_actions_mask].reshape(
+                        input_embeddings.shape[0], -1, input_embeddings.shape[2]
+                    )  # (B, lang_seq_len, llm_dim)
+                except Exception as e:
+                    print(f"Error: {e}")
+                    print("non-action tokens shape:", input_embeddings[~all_actions_mask].shape)
+                    print(f"input_embeddings.shape: {input_embeddings.shape}")
+                    print(f"all_actions_mask.shape: {all_actions_mask.shape}")
+                    print("curr_action_mask:", get_current_action_mask(labels))
+                    print("next_action_mask:", get_next_actions_mask(labels))
+                    import pdb; pdb.set_trace()
 
             # Get visual features
             projected_patch_embeddings = self._process_vision_features(pixel_values, language_embeddings, use_film)
@@ -769,6 +775,8 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
 
         self.action_chunk = NUM_ACTIONS_CHUNK
         self.action_dim = ACTION_DIM
+
+        self.use_pd = False
 
     def set_output_format(self, action_chunk, action_dim):
         self.action_chunk = action_chunk
@@ -1101,6 +1109,43 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         actions = self._unnormalize_actions(normalized_actions, unnorm_key)
 
         return actions, actions_hidden_states
+
+    def predict_action_parallel_decoding(
+        self, 
+        input_ids: torch.LongTensor, 
+        unnorm_key: Optional[str] = None, 
+        **kwargs
+    ) -> Tuple[np.ndarray]:
+        """Thin wrapper around super().generate() that decodes predicted actions and de-normalizes them."""
+        assert self.use_pd, "Parallel decoding must be used for parallel decoding prediction"
+        # TODO: complete this function
+        pass
+        
+    def predict_action_autoregressive(
+            self, input_ids: torch.LongTensor, unnorm_key: Optional[str] = None, **kwargs
+    ) -> Tuple[np.ndarray]:
+        """Thin wrapper around super().generate() that decodes predicted actions and de-normalizes them."""
+        assert not self.use_pd, "Parallel decoding cannot be used for autoregressive prediction"
+
+        generated_ids = self.generate(input_ids, **kwargs)
+
+        # Extract predicted action tokens and translate into (normalized) continuous actions
+        predicted_action_token_ids = generated_ids[0, -(self.get_action_dim(unnorm_key) + 1) : -1].cpu().numpy()
+        discretized_actions = self.vocab_size - predicted_action_token_ids
+        discretized_actions = np.clip(discretized_actions - 1, a_min=0, a_max=self.bin_centers.shape[0] - 1)
+        normalized_actions = self.bin_centers[discretized_actions]
+
+        # Unnormalize actions
+        action_norm_stats = self.get_action_stats(unnorm_key)
+        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))
+        action_high, action_low = np.array(action_norm_stats["q99"]), np.array(action_norm_stats["q01"])
+        actions = np.where(
+            mask,
+            0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
+            normalized_actions,
+        )
+
+        return actions, generated_ids
 
     @staticmethod
     def _check_unnorm_key(norm_stats: Dict[str, Dict[str, Any]], unnorm_key: Optional[str]) -> str:

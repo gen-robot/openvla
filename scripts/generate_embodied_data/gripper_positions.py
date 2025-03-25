@@ -7,13 +7,13 @@ from matplotlib import pyplot as plt
 from PIL import Image
 from transformers import SamModel, SamProcessor, pipeline
 
+# import pdb; pdb.set_trace()
 checkpoint = "google/owlvit-base-patch16"
 detector = pipeline(model=checkpoint, task="zero-shot-object-detection")
 sam_model = SamModel.from_pretrained("facebook/sam-vit-base")
 sam_processor = SamProcessor.from_pretrained("facebook/sam-vit-base")
-
-image_dims = (256, 256)
-image_label = "image_0"
+image_dims = (640, 480) #(256, 256)
+image_label = "cam_high" #"image_0"
 
 
 def get_bounding_boxes(img, prompt="the black robotic gripper"):
@@ -65,6 +65,16 @@ def get_gripper_mask(img, pred):
 
 
 def sq(w, h):
+    """
+    Creates a coordinate grid of shape (h, w, 2) where each point contains its (x, y) coordinates.
+    
+    Example:
+    sq(3, 2) returns:
+    [[[0, 0], [1, 0], [2, 0]],
+     [[0, 1], [1, 1], [2, 1]]]
+    
+    This is used to map between pixel positions and their coordinates in the image.
+    """
     return np.concatenate(
         [(np.arange(w * h).reshape(h, w) % w)[:, :, None], (np.arange(w * h).reshape(h, w) // w)[:, :, None]], axis=-1
     )
@@ -81,8 +91,22 @@ def mask_to_pos_weighted(mask):
 
     return x, y
 
-
 def mask_to_pos_naive(mask):
+    """
+    Finds the position of the gripper in the image using a naive approach.
+    
+    This function:
+    1. Creates a coordinate grid for the image
+    2. Weights the mask by the sum of x and y coordinates
+    3. Finds the position with the maximum weighted value
+    4. Applies an offset to center the position relative to the gripper
+    
+    Args:
+        mask: Binary mask of the gripper
+        
+    Returns:
+        (x, y): Tuple of coordinates representing the gripper position
+    """
     pos = sq(*image_dims)
     weight = pos[:, :, 0] + pos[:, :, 1]
     min_pos = np.argmax((weight * mask).flatten())
@@ -139,7 +163,9 @@ def get_gripper_pos_raw(img):
 
 def process_trajectory(episode):
     images = [step["observation"][image_label] for step in episode["steps"]]
-    states = [step["observation"]["state"] for step in episode["steps"]]
+    # states = [step["observation"]["state"] for step in episode["steps"]]
+    print([step.keys() for step in episode["steps"]][0])
+    states = [step["ee_pose"] for step in episode["steps"]]
 
     raw_trajectory = [(*get_gripper_pos_raw(img), state) for img, state in zip(images, states)]
 
@@ -194,6 +220,20 @@ def get_corrected_positions(episode_id, builder, plot=False):
             cv2.circle(img, (int(p[0]), int(p[1])), radius=5, color=(255, 0, 0), thickness=-1)
             for img, p in zip(images, pr_pos)
         ]
-        mediapy.show_video(images, fps=10)
+        mediapy.write_video("gripper_trajectory.mp4", images, fps=10)
 
     return pr_pos
+
+
+if __name__ == "__main__":
+    import tensorflow_datasets as tfds
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--episode_id", type=int, default=0)
+    parser.add_argument("--dataset_name", type=str, default="cobot_rlds")
+    parser.add_argument("--dataset_dir", type=str, default="datasets")
+    args = parser.parse_args()
+
+    builder = tfds.builder(args.dataset_name, data_dir=args.dataset_dir)
+    pr_pos = get_corrected_positions(args.episode_id, builder, plot=True)
+    import pdb; pdb.set_trace()

@@ -21,7 +21,7 @@ if [ ${is_debug} = True ]; then
     num_gpus=1
     project_name="OpenVLA-debug"
 elif [ ${enable_cot} = True ]; then
-    num_gpus=2 # all available GPUs
+    num_gpus=6 # all available GPUs
     project_name="VLA-Reasoning"
 else
     num_gpus=4 # all available GPUs

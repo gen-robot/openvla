@@ -50,7 +50,6 @@ def build_prompt(features, language_instruction, caption=None, list_only_moves=F
         if list_only_moves:
             structured_features = structured_features + f'    {i}: "{features["move_primitive"][i]}"\n'
         else:
-            assert False, "This hasn't been fixed yet"
             structured_features = structured_features + f'    {i}: {"{"}\n'
 
             for key in keys:
@@ -72,17 +71,13 @@ def build_prompt(features, language_instruction, caption=None, list_only_moves=F
     else:
         features_desc = (
             "Each entry in that dictionary corresponds to a single step on "
-            "the trajectory. Note that for a dual-arm robot, each step may "
-            "include separate features for both the left and right arms. "
-            "The provided features are the following:\n\n"
-            '- "state_3d_left" and "state_3d_right": The 3D coordinates of '
-            "each robotic arm end effector. Moving forward increases the "
-            "first coordinate, moving left increases the second coordinate, "
-            "and moving up increases the third coordinate."
-            '- "move_primitive_left" and "move_primitive_right": Describe '
-            "the primitive moves that are about to be executed by each arm,\n"
-            '- "gripper_position_left" and "gripper_position_right": Denote '
-            "the location of each arm's gripper in the 256x256 image observation"
+            "the trajectory. The provided features are the following:\n"
+            "\n"
+            '- "state_3d" are the current 3d coordinates of the robotic arm end effector; '
+            "moving forward increases the first coordinate; moving left increases the second "
+            "coordinate; moving up increases the third coordinate,\n"
+            '- "move_primitive" describes the move that is about to be executed,\n'
+            '- "gripper_position" denotes the location of the gripper in the 256x256 image observation'
         )
 
     if caption is None:
@@ -100,9 +95,10 @@ The robot is operating in the following environment. {caption}
 
 ## Specification of the experimental setup
 
-You're an expert reinforcement learning researcher. You've trained an optimal policy for controlling a dual-arm robot. 
-The dual-arm robot successfully completed a task specified by the instruction: "{language_instruction}". For that 
-purpose, the dual-arm robot executed a sequence of actions. Consecutive moves that were executed are the following:
+You're an expert reinforcement learning researcher. You've trained an optimal policy for controlling a robotic arm. The
+robot successfully completed a task specified by the instruction: "{language_instruction}". For that purpose, the
+robotic arm executed a sequence of actions. Consecutive moves that were executed are the following:
+
 
 ```python
 trajectory_features = {structured_features}
@@ -122,7 +118,7 @@ break_line}relevant objects, possible obstacles or difficulties to avoid, and an
 ### Begin by describing the task
 
 Start by giving an overview of the task. Make it more comprehensive than the simple instruction. Include the activity, {
-break_line}the objects the dual-arm robot interacts with, and their relative locations in the environment. Then, describe {
+break_line}the objects the robotic arm interacts with, and their relative locations in the environment. Then, describe {
 break_line}the high-level movements that were most likely executed, based on the task that was completed and the {
 break_line}primitive movements that were executed. Then, for each high-level movement write the interval of steps that {
 break_line}movement consists of. Also, for each high-level movement write a justification for why it should be {
@@ -152,7 +148,7 @@ break_line}and place it inside a tag <plan>.
 break_line}inside a tag <subtask>.
 - Describe why the chosen high-level step should be executed now, which features of the current environment influence {
 break_line}that decision, and how it should be done. Place it within a tag <subtask_reason>.
-- Describe the current primitive movement of each arm that needs to be executed, and place it inside a tag <move>.
+- Describe the current primitive movement of the arm that needs to be executed, and place it inside a tag <move>.
 - Describe why the chosen movement should be executed now and which features of the current environment influence that {
 break_line}decision. Place it inside a tag <move_reason>.
 
@@ -167,7 +163,6 @@ Here is a breakdown of what needs to be done:
 break_line}should be descriptive and precise. You should provide exactly one reasoning string for each step on the {
 break_line}trajectory specified by `trajectory_features`.
 - At the very end of the response, write a single label FINISHED to indicate that the answer is complete."""
-
 
 
 def find_task_occurrences(input_string, tags):
@@ -225,17 +220,17 @@ def get_reasoning_dict(features, metadata, lm):
     prompt = build_prompt(features, language_instruction, caption=caption, list_only_moves=True)
     print("metadata:", metadata, "\nprompt:", prompt)
 
-    # reasoning_output = lm.generate(prompt)
-    # # import pdb; pdb.set_trace()
-    # print("reasoning:", reasoning_output)
+    reasoning_output = lm.generate(prompt)
+    # import pdb; pdb.set_trace()
+    print("reasoning:", reasoning_output)
 
     # save reasoning output to file
-    with open("reasoning_output.txt", "r") as f:
-        # f.write(reasoning_output)
-        # read the content into a string
-        reasoning_output = ""
-        for line in f:
-            reasoning_output += line
+    # with open("reasoning_output.txt", "r") as f:
+    #     # f.write(reasoning_output)
+    #     # read the content into a string
+    #     reasoning_output = ""
+    #     for line in f:
+    #         reasoning_output += line
 
     return extract_reasoning_dict(reasoning_output)
 
@@ -245,9 +240,8 @@ def build_single_reasoning(episode_id, builder, lm, captions):
     episode = next(iter(ds))
 
     ft = dict()
-    # import pdb; pdb.set_trace()
-    ft["state_3d_left"] = [list(step["ee_pose"][:3].numpy()) for step in episode["steps"]]
-    ft["state_3d_right"] = [list(step["ee_pose"][7:10].numpy()) for step in episode["steps"]]
+
+    ft["state_3d"] = [list(step["observation"]["state"][:3].numpy()) for step in episode["steps"]]
 
     move_primitives = get_move_primitives_episode(episode)
     ft["move_primitive"] = [move[0] for move in move_primitives]
@@ -256,7 +250,7 @@ def build_single_reasoning(episode_id, builder, lm, captions):
         "episode_id": str(int(episode["episode_metadata"]["episode_id"].numpy())),
         "file_path": str(episode["episode_metadata"]["file_path"].numpy())[2:-1],
         "n_steps": len(episode["steps"]),
-        "language_instruction": str(next(iter(episode["steps"]))["instruction"].numpy().decode()),
+        "language_instruction": str(next(iter(episode["steps"]))["language_instruction"].numpy().decode()),
     }
 
     mt["caption"] = captions[mt["file_path"]][mt["episode_id"]]["caption"]
@@ -289,10 +283,7 @@ def generate_reasonings(builder, episode_ids, save_path="reasonings.json"):
         else:
             reasonings[entry["metadata"]["file_path"]] = {entry["metadata"]["episode_id"]: entry}
 
-        print("computed reasoning:", entry)\
-        
-
-    import pdb; pdb.set_trace()
+        print("computed reasoning:", entry)
 
     import numpy as np
 
@@ -313,6 +304,7 @@ def generate_reasonings(builder, episode_ids, save_path="reasonings.json"):
 
     with open(save_path, "w") as out_f:
         json.dump(jsonify(reasonings), out_f)
+
 
 
 if __name__ == "__main__":

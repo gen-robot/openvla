@@ -16,6 +16,7 @@ MOVE: stop
 GRIPPER POSITION: [97, 45, 97, 45, 89, 52, 83, 58, 82, 57]
 """
 
+from typing import List, Dict
 
 import enum
 import torch
@@ -217,3 +218,46 @@ def compute_cot_accuracy(predicted_token_ids, ground_truth_token_ids, llm_tokeni
             metrics.update(**{f"reasoning/{tag[:-1].lower()}_tag_accuracy": tag_accuracy})
 
     return metrics
+
+
+def split_reasoning(text, tags: List[CotTag] = None):
+    if tags is None:
+        tags = get_cot_tags_list()
+
+    new_parts = {None: text}
+
+    for tag in tags:
+        parts = new_parts
+        new_parts = dict()
+
+        for k, v in parts.items():
+            if tag in v:
+                s = v.split(tag)
+                new_parts[k] = s[0]
+                new_parts[tag] = s[1]
+            else:
+                new_parts[k] = v
+
+    return new_parts
+
+
+def get_metadata(reasoning: Dict[str, str]):
+    metadata = {"gripper": [[0, 0]], "bboxes": dict()}
+
+    if f" {CotTag.GRIPPER_POSITION.value}" in reasoning:
+        gripper_pos = reasoning[f" {CotTag.GRIPPER_POSITION.value}"]
+        gripper_pos = gripper_pos.split("[")[-1]
+        gripper_pos = gripper_pos.split("]")[0]
+        gripper_pos = [int(x) for x in gripper_pos.split(",")]
+        gripper_pos = [(gripper_pos[2 * i], gripper_pos[2 * i + 1]) for i in range(len(gripper_pos) // 2)]
+        metadata["gripper"] = gripper_pos
+
+    if f" {CotTag.VISIBLE_OBJECTS.value}" in reasoning:
+        for sample in reasoning[f" {CotTag.VISIBLE_OBJECTS.value}"].split("]"):
+            obj = sample.split("[")[0]
+            if obj == "":
+                continue
+            coords = [int(n) for n in sample.split("[")[-1].split(",")]
+            metadata["bboxes"][obj] = coords
+
+    return metadata
