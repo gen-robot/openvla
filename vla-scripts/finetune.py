@@ -1258,7 +1258,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 run_validation(
                     vla=vla,
                     processor=processor,
-                    action_head=action_head,
+                    action_head=action_head if (cfg.use_l1_regression or cfg.use_diffusion) else None,
                     noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
                     proprio_projector=proprio_projector if cfg.use_proprio else None,
                     val_dataloader=val_dataloader,

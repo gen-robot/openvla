@@ -99,6 +99,7 @@ def chunk_act_obs(traj: Dict, window_size: int, future_action_window_size: int =
     * "action" is given a new axis (at index 1) of size `window_size + future_action_window_size` containing `window_size - 1` actions from the past, the current action, and `future_action_window_size` actions from the future.
     * "pad_mask" is added to "observation" and indicates whether an observation should be considered padding (i.e. if it had come from a timestep before the start of the trajectory).
     """
+    special_keys = ["observation", "action", "task"]
 
     # FIXME: we should not ignore the last future_action_window_size steps, padding last obs/actions with proper values according to the absolute_action_mask
     traj_len = tf.shape(traj["action"])[0]
@@ -130,10 +131,13 @@ def chunk_act_obs(traj: Dict, window_size: int, future_action_window_size: int =
 
     # Truncate other elements of the trajectory dict
     traj["task"] = tf.nest.map_structure(lambda x: tf.gather(x, tf.range(effective_traj_len)), traj["task"])
-    traj["dataset_name"] = tf.gather(traj["dataset_name"], tf.range(effective_traj_len))
-    traj["absolute_action_mask"] = tf.gather(traj["absolute_action_mask"], tf.range(effective_traj_len))
-    if "reasoning" in traj:
-        traj["reasoning"] = tf.gather(traj["reasoning"], tf.range(effective_traj_len))
+    # traj["dataset_name"] = tf.gather(traj["dataset_name"], tf.range(effective_traj_len))
+    # traj["absolute_action_mask"] = tf.gather(traj["absolute_action_mask"], tf.range(effective_traj_len))
+    # if "reasoning" in traj:
+    #     traj["reasoning"] = tf.gather(traj["reasoning"], tf.range(effective_traj_len))
+    for key in traj.keys():
+        if key not in special_keys:
+            traj[key] = tf.gather(traj[key], tf.range(effective_traj_len))
 
     return traj
 

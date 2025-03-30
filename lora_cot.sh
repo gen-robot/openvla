@@ -1,4 +1,4 @@
-task_name="bridge_rt_1"
+task_name="bridge_orig"
 use_film=False                      # if True, it will inject the language instruction into the visual encoder via FiLM
 use_proprio=False                   # if True, it will use the proprioceptive sensor data, which would be useful for L1 regression or diffusion head
 num_images_in_input=1               # the number of images in the input. if you want to use wrist images, set it to 3 or whatever you want.
@@ -21,7 +21,7 @@ if [ ${is_debug} = True ]; then
     num_gpus=1
     project_name="OpenVLA-debug"
 elif [ ${enable_cot} = True ]; then
-    num_gpus=6 # all available GPUs
+    num_gpus=7 # all available GPUs
     project_name="VLA-Reasoning"
 else
     num_gpus=4 # all available GPUs
@@ -39,7 +39,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetu
   --use_lora ${use_lora} \
   --lora_rank 64 \
   --batch_size 2 \
-  --grad_accumulation_steps 2 \
+  --grad_accumulation_steps 4 \
   --learning_rate 5e-4 \
   --image_aug False \
   --wandb_project ${project_name} \
@@ -49,4 +49,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetu
   --use_diffusion ${use_diffusion} \
   --use_parallel_decoding ${use_parallel_decoding} \
   --enable_cot ${enable_cot} \
-  --num_actions_chunk ${num_actions_chunk}
+  --num_actions_chunk ${num_actions_chunk} \
+  --use_val_set True \
+  --save_freq 5000 \
+  --val_freq 5000

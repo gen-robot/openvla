@@ -15,12 +15,18 @@ MOVE REASONING: The arm is already in a good position to reach for the wooden ar
 MOVE: stop
 GRIPPER POSITION: [97, 45, 97, 45, 89, 52, 83, 58, 82, 57]
 """
-
-from typing import List, Dict
-
 import enum
-import torch
+import os
+import textwrap
+from typing import Dict, List
+
+import cv2
+import numpy as np
 import tensorflow as tf
+import torch
+from PIL import Image, ImageDraw, ImageFont
+
+from .img_utils import draw_2d_points, draw_bboxes
 
 
 class CotTag(enum.Enum):
@@ -65,7 +71,6 @@ def get_cot_database_keys():
         CotTag.GRIPPER_POSITION.value: "gripper",
         CotTag.ACTION.value: "action",
     }
-
 
 
 def make_tf_hash_table(raw_dict):
@@ -255,9 +260,62 @@ def get_metadata(reasoning: Dict[str, str]):
     if f" {CotTag.VISIBLE_OBJECTS.value}" in reasoning:
         for sample in reasoning[f" {CotTag.VISIBLE_OBJECTS.value}"].split("]"):
             obj = sample.split("[")[0]
-            if obj == "":
+            if obj.strip() == "":
                 continue
-            coords = [int(n) for n in sample.split("[")[-1].split(",")]
-            metadata["bboxes"][obj] = coords
+            try:
+                coords = [int(n) for n in sample.split("[")[-1].split(",")]
+                metadata["bboxes"][obj] = coords
+            except Exception as e:
+                print(f"Error parsing bbox: {e}")
+                import pdb; pdb.set_trace()
 
     return metadata
+
+
+def visualize_reasoning(image: np.ndarray, instruction: str, reasoning_text: str=''):
+    tags = [f" {tag}" for tag in get_cot_tags_list()]
+    reasoning = split_reasoning(reasoning_text, tags)
+    text = ['Instruction: ' + instruction]
+    for tag in tags:
+        if tag in reasoning:
+            text += [tag + reasoning[tag]]
+        else:
+            text += [tag + ' ']
+    metadata = get_metadata(reasoning)
+    bboxes = {}
+    for k, v in metadata["bboxes"].items():
+        if k[0] == ",":
+            k = k[1:]
+        bboxes[k.lstrip().rstrip()] = v
+
+    caption = ""
+    for t in text:
+        wrapper = textwrap.TextWrapper(width=80, replace_whitespace=False)
+        word_list = wrapper.wrap(text=t)
+        caption_new = ''
+        for ii in word_list[:-1]:
+            caption_new = caption_new + ii + '\n    '
+        caption_new += word_list[-1]
+
+        caption += caption_new.lstrip() + "\n"
+
+    img_arr = np.array(image)
+    img_size = img_arr.shape[:2]
+    draw_2d_points(img_arr, metadata["gripper"], img_size=img_size)
+    draw_bboxes(img_arr, bboxes, img_size=img_size)
+
+    base = Image.fromarray(np.ones((img_size[0], img_size[0] * 2, 3), dtype=np.uint8) * 255)
+    draw = ImageDraw.Draw(base)
+    font_path = os.path.join(cv2.__path__[0],'qt','fonts','DejaVuSans.ttf')
+    font = ImageFont.truetype(font_path, size=7)
+    color = (0,0,0) # RGB
+    draw.text((5, 5), caption, color, font=font)
+
+    text_arr = np.array(base)
+    # resize text_arr to make it can be concatenated with img_arr at the same height, keep the aspect ratio
+    target_height = img_arr.shape[0]
+    text_arr = cv2.resize(text_arr, (int(text_arr.shape[1] * target_height / text_arr.shape[0]), target_height))
+    
+    reasoning_img = np.concatenate([img_arr, text_arr], axis=1)
+
+    return reasoning_img

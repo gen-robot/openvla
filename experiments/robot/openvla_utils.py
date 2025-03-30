@@ -251,7 +251,7 @@ def load_component_state_dict(checkpoint_path: str) -> Dict[str, torch.Tensor]:
     return new_state_dict
 
 
-def get_vla(cfg: Any) -> torch.nn.Module:
+def get_vla(cfg: Any, action_dim: int=ACTION_DIM) -> torch.nn.Module:
     """
     Load and initialize the VLA model from checkpoint.
 
@@ -288,7 +288,7 @@ def get_vla(cfg: Any) -> torch.nn.Module:
         bits_and_bytes_config = dict()
 
     # Load the model
-    vla = AutoModelForVision2Seq.from_pretrained(
+    vla = OpenVLAForActionPrediction.from_pretrained(
         cfg.pretrained_checkpoint,
         # attn_implementation="flash_attention_2",
         torch_dtype=torch.bfloat16,
@@ -309,14 +309,10 @@ def get_vla(cfg: Any) -> torch.nn.Module:
 
     # Set number of images in model input
     vla.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
-    vla.set_output_format(num_actions_chunk, ACTION_DIM)
+    vla.set_output_format(num_actions_chunk, action_dim)
 
+    # import pdb; pdb.set_trace()
     if cfg.use_parallel_decoding:
-        # llm_model = vla.language_model
-        # print("Current attention implementation inside {}: {}".format(
-        #     llm_model.__class__.__name__, llm_model.model._attn_implementation))
-        # assert llm_model.model._attn_implementation == "sdpa", "Only SDPA attention is supported for parallel decoding!"
-        # llm_model.model.enable_parallel_decoding()
         vla.enable_parallel_decoding()
 
     vla.eval()
@@ -774,7 +770,7 @@ def get_vla_action(
         primary_image = all_images.pop(0)
 
         # Build VLA prompt
-        prompt = f"In: What action should the robot take to {task_label.lower()}?\nOut:"
+        prompt = f"In: What action should the robot take to {task_label.lower()}?\nOut: TASK:"
 
         # Process primary image
         inputs = processor(prompt, primary_image).to(DEVICE, dtype=torch.bfloat16)
@@ -798,32 +794,18 @@ def get_vla_action(
             proprio = obs["state"]
 
         # Generate action
-        if action_head is None:
-            # Standard VLA output (single-image inputs, discrete actions)
-            action, _ = vla.predict_action(
-                **inputs, 
-                unnorm_key=cfg.unnorm_key, 
-                do_sample=do_sample,
-                proprio=proprio,
-                proprio_projector=proprio_projector,
-                noisy_action_projector=noisy_action_projector,
-                use_film=use_film,
-            )
-        else:
-            # Custom action head for continuous actions
-            action, _ = vla.predict_action(
-                **inputs,
-                unnorm_key=cfg.unnorm_key,
-                do_sample=do_sample,
-                proprio=proprio,
-                proprio_projector=proprio_projector,
-                noisy_action_projector=noisy_action_projector,
-                action_head=action_head,
-                use_film=use_film,
-            )
-
+        action, generated_ids = vla.predict_action(
+            **inputs, 
+            unnorm_key=cfg.unnorm_key, 
+            do_sample=do_sample,
+            proprio=proprio,
+            proprio_projector=proprio_projector,
+            noisy_action_projector=noisy_action_projector,
+            use_film=use_film,
+            action_head=action_head,
+        )
     # Extract subset of actions for open loop steps
-    return [action[i] for i in range(min(len(action), cfg.num_open_loop_steps))]
+    return [action[i] for i in range(min(len(action), cfg.num_open_loop_steps))], generated_ids
 
 
 def get_action_from_server(

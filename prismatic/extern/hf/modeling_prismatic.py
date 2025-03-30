@@ -528,6 +528,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         output_projector_features: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        # below are added by OpenVLA-OFT
         proprio=None,
         proprio_projector=None,
         noisy_actions=None,
@@ -594,12 +595,11 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             # Get input embeddings (from language model embeddings)
             input_embeddings = self.get_input_embeddings()(input_ids)  # (B, seq_len, D)
 
-            # Extract action masks
-            all_actions_mask = self._process_action_masks(labels)
-            
             if not use_film:
                 language_embeddings = None
             else:
+                # Extract action masks
+                all_actions_mask = self._process_action_masks(labels)
                 try:
                     # Extract the language portion of the input embeddings (i.e. remove the action tokens portion)
                     language_embeddings = input_embeddings[~all_actions_mask].reshape(
@@ -748,6 +748,34 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                 "use_cache": kwargs.get("use_cache"),
             }
         )
+
+        # additional inputs used by OpenVLA-OFT
+        if 'proprio' in kwargs and 'proprio_projector' in kwargs:
+            model_inputs.update(
+                {
+                    "proprio": kwargs["proprio"],
+                    "proprio_projector": kwargs["proprio_projector"],
+                }
+            )
+        if 'noisy_actions' in kwargs and 'noisy_action_projector' in kwargs:
+            model_inputs.update(
+                {
+                    "noisy_actions": kwargs["noisy_actions"],
+                    "noisy_action_projector": kwargs["noisy_action_projector"],
+                }
+            )
+        if 'diffusion_timestep_embeddings' in kwargs:
+            model_inputs.update(
+                {
+                    "diffusion_timestep_embeddings": kwargs["diffusion_timestep_embeddings"],
+                }
+            )
+        if 'use_film' in kwargs:
+            model_inputs.update(
+                {
+                    "use_film": kwargs["use_film"],
+                }
+            )
 
         return model_inputs
 
@@ -998,6 +1026,29 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         self,
         input_ids: Optional[torch.LongTensor] = None,
         unnorm_key: Optional[str] = None,
+        **kwargs
+    ) -> np.ndarray:
+        """Predict actions from input sequence, with options for different prediction methods."""
+        # If the special empty token ('') does not already appear after the colon (':') token in the prompt
+        # (after "OUT:" or "ASSISTANT:"), insert it to match the inputs seen at training time
+        if not torch.all(input_ids[:, -1] == 29871):
+            input_ids = torch.cat(
+                (input_ids, torch.unsqueeze(torch.Tensor([29871]).long(), dim=0).to(input_ids.device)), dim=1
+            )
+        # import pdb; pdb.set_trace()
+        if self.use_pd:
+            return self.predict_action_parallel_decoding(
+                input_ids, unnorm_key, **kwargs
+            )
+        else:
+            return self.predict_action_autoregressive(
+                input_ids, unnorm_key, **kwargs
+            )
+
+    def predict_action_parallel_decoding(
+        self,
+        input_ids: Optional[torch.LongTensor] = None,
+        unnorm_key: Optional[str] = None,
         proprio=None,
         proprio_projector=None,
         action_head=None,
@@ -1109,42 +1160,33 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         actions = self._unnormalize_actions(normalized_actions, unnorm_key)
 
         return actions, actions_hidden_states
-
-    def predict_action_parallel_decoding(
+        
+    def predict_action_autoregressive(
         self, 
         input_ids: torch.LongTensor, 
         unnorm_key: Optional[str] = None, 
         **kwargs
-    ) -> Tuple[np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Thin wrapper around super().generate() that decodes predicted actions and de-normalizes them."""
-        assert self.use_pd, "Parallel decoding must be used for parallel decoding prediction"
-        # TODO: complete this function
-        pass
-        
-    def predict_action_autoregressive(
-            self, input_ids: torch.LongTensor, unnorm_key: Optional[str] = None, **kwargs
-    ) -> Tuple[np.ndarray]:
-        """Thin wrapper around super().generate() that decodes predicted actions and de-normalizes them."""
-        assert not self.use_pd, "Parallel decoding cannot be used for autoregressive prediction"
-
-        generated_ids = self.generate(input_ids, **kwargs)
+        generated_ids = self.generate(
+            input_ids, 
+            max_new_tokens=1024,
+            **kwargs)
 
         # Extract predicted action tokens and translate into (normalized) continuous actions
-        predicted_action_token_ids = generated_ids[0, -(self.get_action_dim(unnorm_key) + 1) : -1].cpu().numpy()
+        # if the last token is not stop token, select last action-dim tokens, otherwise get rid of the stop token, and then select last action-dim tokens
+        action_total_dim = self.action_chunk * self.action_dim
+        if generated_ids[0, -1] != STOP_INDEX:
+            predicted_action_token_ids = generated_ids[0, -action_total_dim :].cpu().numpy()
+        else:
+            predicted_action_token_ids = generated_ids[0, -action_total_dim - 1 : -1].cpu().numpy()
         discretized_actions = self.vocab_size - predicted_action_token_ids
         discretized_actions = np.clip(discretized_actions - 1, a_min=0, a_max=self.bin_centers.shape[0] - 1)
         normalized_actions = self.bin_centers[discretized_actions]
+        normalized_actions = normalized_actions.reshape(self.action_chunk, self.action_dim)
 
         # Unnormalize actions
-        action_norm_stats = self.get_action_stats(unnorm_key)
-        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))
-        action_high, action_low = np.array(action_norm_stats["q99"]), np.array(action_norm_stats["q01"])
-        actions = np.where(
-            mask,
-            0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
-            normalized_actions,
-        )
-
+        actions = self._unnormalize_actions(normalized_actions, unnorm_key)
         return actions, generated_ids
 
     @staticmethod

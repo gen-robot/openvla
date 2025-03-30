@@ -20,15 +20,9 @@ from huggingface_hub import hf_hub_download
 
 from prismatic.overwatch import initialize_overwatch
 from prismatic.vla.constants import (
-    ACTION_DIM,
     ACTION_PROPRIO_NORMALIZATION_TYPE,
-    ACTION_TOKEN_BEGIN_IDX,
-    IGNORE_INDEX,
-    NUM_ACTIONS_CHUNK,
-    PROPRIO_DIM,
-    STOP_INDEX,
 )
-from prismatic.util.cot_utils import get_cot_database_keys, get_cot_tags_list, make_tf_hash_table
+from prismatic.util.cot_utils import make_tf_hash_table
 from prismatic.vla.datasets.rlds import obs_transforms, traj_transforms
 from prismatic.vla.datasets.rlds.utils import goal_relabeling, task_augmentation
 from prismatic.vla.datasets.rlds.utils.data_utils import (
@@ -218,25 +212,33 @@ def make_dataset_from_rlds(
                 )
             task["language_instruction"] = traj.pop(language_key)
 
-        if load_cot_labels and 'episode_id' in traj["traj_metadata"]["episode_metadata"]:
+        # import pdb; pdb.set_trace()
+        reasonings = tf.repeat("", traj_len)
+        metadata_dict = dict()
+        if 'episode_id' in traj["traj_metadata"].get("episode_metadata", {}).keys():
             file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
             episode_id = traj["traj_metadata"]["episode_metadata"]["episode_id"][0]
 
-            file_names = tf.repeat(file_name, traj_len)
-            episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
-            indices = tf.as_string(tf.range(traj_len))
-            reasonings = reasoning_dataset.lookup(file_names + "_" + episode_ids + "_" + indices)
-        else:
-            reasonings = tf.repeat("", traj_len)
+            if load_cot_labels:
+                file_names = tf.repeat(file_name, traj_len)
+                episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
+                indices = tf.as_string(tf.range(traj_len))
+                reasonings = reasoning_dataset.lookup(file_names + "_" + episode_ids + "_" + indices)
+
+                metadata_dict = {
+                    "file_name": tf.repeat(file_name, traj_len),
+                    "episode_id": tf.repeat(episode_id, traj_len),
+                    "traj_len": tf.repeat(traj_len, traj_len),
+                }
 
         traj = {
             "observation": new_obs,
             "task": task,
             "action": tf.cast(traj["action"], tf.float32),
             "dataset_name": tf.repeat(name, traj_len),
+            "reasoning": reasonings,
+            **metadata_dict,
         }
-        # if load_cot_labels:
-        traj["reasoning"] = reasonings
 
         if absolute_action_mask is not None:
             if len(absolute_action_mask) != traj["action"].shape[-1]:
@@ -285,10 +287,10 @@ def make_dataset_from_rlds(
         dataset_statistics["action"]["mask"] = np.array(action_normalization_mask)
 
     # construct the dataset
-    # if "val" not in builder.info.splits:
-    #     split = "train[:95%]" if train else "train[95%:]"
-    # else:
-    split = "train" if train else "val"
+    if "val" not in builder.info.splits:
+        split = "train[:95%]" if train else "train[95%:]"
+    else:
+        split = "train" if train else "val"
 
     dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=shuffle, num_parallel_reads=num_parallel_reads)
 
@@ -487,6 +489,7 @@ def make_single_dataset(
     train: bool,
     traj_transform_kwargs: dict = {},
     frame_transform_kwargs: dict = {},
+    enable_cot: bool = False,
 ) -> dl.DLataset:
     """Creates a single dataset from kwargs. Returns a dataset of trajectories.
 
@@ -499,6 +502,7 @@ def make_single_dataset(
     dataset, dataset_statistics = make_dataset_from_rlds(
         **dataset_kwargs,
         train=train,
+        enable_cot=enable_cot,
     )
     dataset = apply_trajectory_transforms(dataset, **traj_transform_kwargs, train=train)
     dataset = apply_frame_transforms(dataset, **frame_transform_kwargs, train=train)
@@ -626,11 +630,13 @@ def make_interleaved_dataset(
 
     # Validation =>> fix a single shuffle buffer of data and cache it in RAM; prevents gradual memory increase!
     if not train:
-        dataset = dataset.take(shuffle_buffer_size).cache()
+        if shuffle_buffer_size > 0:
+            dataset = dataset.take(shuffle_buffer_size).cache()
 
     # Shuffle the Dataset
     #   =>> IMPORTANT :: Shuffle AFTER .cache(), or else memory will still leak!
-    dataset = dataset.shuffle(shuffle_buffer_size)
+    if shuffle_buffer_size > 0:
+        dataset = dataset.shuffle(shuffle_buffer_size)
 
     # Apply Frame Transforms
     overwatch.info("Applying frame transforms on dataset...")

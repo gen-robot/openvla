@@ -311,6 +311,7 @@ class EpisodicRLDSDataset(RLDSDataset):
             train=rlds_config["train"],
             traj_transform_kwargs=rlds_config["traj_transform_kwargs"],
             frame_transform_kwargs=rlds_config["frame_transform_kwargs"],
+            enable_cot=self.enable_cot,
         )
 
     def __iter__(self) -> Dict[str, Any]:
