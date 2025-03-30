@@ -10,9 +10,9 @@ num_images_in_input=1               # the number of images in the input. if you 
 use_l1_regression=False             # if True, it will use the L1 regression head
 use_diffusion=False                 # if True, it will use the diffusion head
 merge_lora_during_training=False    # if True, it will merge the LoRA weights during training, which will slightly increase the GPU memory usage
-num_actions_chunk=1                 # the number of actions to be predicted
+num_actions_chunk=5                 # the number of actions to be predicted
 use_parallel_decoding=False         # if you use a large chunk_size, make sure you have enabled parallel decoding in the model to increase the throughput
-is_debug=False
+is_debug=True
 enable_cot=True
 use_lora=True
 

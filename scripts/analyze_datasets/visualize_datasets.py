@@ -106,8 +106,8 @@ def main(cfg: Config):
         resize_resolution=(256, 256),
         shuffle_buffer_size=0,
         image_aug=False,
-        window_size=1,
-        future_action_window_size=0,
+        window_size=cfg.window_size if cfg.window_size is not None else 1,
+        future_action_window_size=cfg.future_action_window_size if cfg.future_action_window_size is not None else 0,
         enable_cot=True,
     )
 
