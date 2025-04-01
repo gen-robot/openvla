@@ -47,7 +47,7 @@ from experiments.robot.robot_utils import (
     normalize_gripper_action,
     set_seed_everywhere,
 )
-from prismatic.vla.constants import NUM_ACTIONS_CHUNK
+from prismatic.vla.constants import NUM_ACTIONS_CHUNK, ACTION_DIM
 
 
 # Define task suite constants
@@ -87,7 +87,12 @@ class GenerateConfig:
     #################################################################################################################
     model_family: str = "openvla"                    # Model family
     pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
+    use_local_vla: bool = True                      # If True, uses local VLA model
 
+    window_size: Optional[int] = None                # If provided, uses a sliding window of this size to chunk the past observations and actions
+    num_actions_chunk: Optional[int] = None          # If provided, uses a action chunk of this size to chunk the future actions
+
+    use_parallel_decoding: bool = True               # If True, uses parallel decoding inside LLaMa model's sdpa attention, i.e., replacing causal mask with bidirectional mask
     use_l1_regression: bool = True                   # If True, uses continuous action head with L1 regression objective
     use_diffusion: bool = False                      # If True, uses continuous action head with diffusion modeling objective (DDIM)
     num_diffusion_steps: int = 50                    # (When `diffusion==True`) Number of diffusion steps for inference
@@ -157,7 +162,7 @@ def initialize_model(cfg: GenerateConfig):
     # Load action head if needed
     action_head = None
     if cfg.use_l1_regression or cfg.use_diffusion:
-        action_head = get_action_head(cfg, model.llm_dim)
+        action_head = get_action_head(cfg, model.llm_dim, action_dim=ACTION_DIM, num_actions_chunk=cfg.num_actions_chunk)
 
     # Load noisy action projector if using diffusion
     noisy_action_projector = None
@@ -195,6 +200,8 @@ def setup_logging(cfg: GenerateConfig):
     run_id = f"EVAL-{cfg.task_suite_name}-{cfg.model_family}-{DATE_TIME}"
     if cfg.run_id_note is not None:
         run_id += f"--{cfg.run_id_note}"
+
+    cfg.run_id = run_id
 
     # Set up local logging
     os.makedirs(cfg.local_log_dir, exist_ok=True)
@@ -296,9 +303,9 @@ def run_episode(
         obs = env.get_observation()
 
     # Initialize action queue
-    if cfg.num_open_loop_steps != NUM_ACTIONS_CHUNK:
-        print(f"WARNING: cfg.num_open_loop_steps ({cfg.num_open_loop_steps}) does not match the NUM_ACTIONS_CHUNK "
-               "{NUM_ACTIONS_CHUNK} constant defined in prismatic.vla.constants! For best performance (in terms of "
+    if cfg.num_open_loop_steps != cfg.num_actions_chunk:
+        print(f"WARNING: cfg.num_open_loop_steps ({cfg.num_open_loop_steps}) does not match the cfg.num_actions_chunk "
+               "{cfg.num_actions_chunk} constant defined in prismatic.vla.constants! For best performance (in terms of "
                "both speed and success rate), we recommend executing the full action chunk.")
     action_queue = deque(maxlen=cfg.num_open_loop_steps)
 
@@ -428,7 +435,7 @@ def run_task(
 
         # Save replay video
         save_rollout_video(
-            replay_images, total_episodes, success=success, task_description=task_description, log_file=log_file
+            replay_images, total_episodes, success=success, task_description=task_description, log_file=log_file, run_id=cfg.run_id
         )
 
         # Log results
@@ -458,6 +465,13 @@ def run_task(
 @draccus.wrap()
 def eval_libero(cfg: GenerateConfig) -> float:
     """Main function to evaluate a trained policy on LIBERO benchmark tasks."""
+    if cfg.num_actions_chunk is not None:
+        cfg.future_action_window_size = cfg.num_actions_chunk - 1
+        num_actions_chunk = cfg.num_actions_chunk
+    else:
+        cfg.future_action_window_size = None
+        num_actions_chunk = cfg.num_actions_chunk = NUM_ACTIONS_CHUNK
+
     # Validate configuration
     validate_config(cfg)
 

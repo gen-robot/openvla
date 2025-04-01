@@ -1,4 +1,5 @@
 **/**/outputs
+logs
 openvla*
 datasets
 checkpoints

@@ -479,7 +479,12 @@ def get_noisy_action_projector(cfg: Any, llm_dim: int) -> NoisyActionProjector:
     return noisy_action_projector
 
 
-def get_action_head(cfg: Any, llm_dim: int) -> Union[L1RegressionActionHead, DiffusionActionHead]:
+def get_action_head(
+    cfg: Any, 
+    llm_dim: int,
+    action_dim: int = ACTION_DIM,
+    num_actions_chunk: int = NUM_ACTIONS_CHUNK,
+) -> Union[L1RegressionActionHead, DiffusionActionHead]:
     """
     Get action head for continuous value prediction.
 
@@ -497,10 +502,19 @@ def get_action_head(cfg: Any, llm_dim: int) -> Union[L1RegressionActionHead, Dif
 
     # Initialize appropriate action head based on configuration
     if cfg.use_l1_regression:
-        action_head = L1RegressionActionHead(input_dim=llm_dim, hidden_dim=llm_dim, action_dim=ACTION_DIM)
+        action_head = L1RegressionActionHead(
+            input_dim=llm_dim, 
+            hidden_dim=llm_dim, 
+            action_dim=action_dim, 
+            num_actions_chunk=num_actions_chunk
+        )
     elif cfg.use_diffusion:
         action_head = DiffusionActionHead(
-            input_dim=llm_dim, hidden_dim=llm_dim, action_dim=ACTION_DIM, num_diffusion_steps=cfg.num_diffusion_steps
+            input_dim=llm_dim, 
+            hidden_dim=llm_dim, 
+            action_dim=action_dim, 
+            num_actions_chunk=num_actions_chunk,
+            num_diffusion_steps=cfg.num_diffusion_steps
         )
     else:
         raise ValueError("Either use_l1_regression or use_diffusion must be True")

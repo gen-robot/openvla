@@ -129,7 +129,7 @@ def get_action(
     """
     with torch.no_grad():
         if cfg.model_family == "openvla":
-            action = get_vla_action(
+            action, _ = get_vla_action(
                 cfg=cfg,
                 vla=model,
                 processor=processor,
