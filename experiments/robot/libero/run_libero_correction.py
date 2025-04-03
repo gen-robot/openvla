@@ -25,6 +25,9 @@ from scipy.spatial.transform import Rotation as R
 
 import wandb
 
+# Plot the action curve for check
+import matplotlib.pyplot as plt
+
 # Append current directory so that interpreter can find experiments.robot
 sys.path.append("../..")
 from experiments.robot.libero.libero_utils import (
@@ -117,7 +120,7 @@ class GenerateConfig:
     #################################################################################################################
     task_suite_name: str = TaskSuite.LIBERO_SPATIAL  # Task suite
     num_steps_wait: int = 10                         # Number of steps to wait for objects to stabilize in sim
-    num_trials_per_task: int = 50                    # Number of rollouts per task
+    num_trials_per_task: int = 250                    # Number of rollouts per task
     initial_states_path: str = "DEFAULT"             # "DEFAULT", or path to initial states JSON file
     env_img_res: int = 256                           # Resolution for environment images (not policy input resolution)
 
@@ -134,7 +137,6 @@ class GenerateConfig:
     seed: int = 7                                    # Random Seed (for reproducibility)
 
     # fmt: on
-
 
 def validate_config(cfg: GenerateConfig) -> None:
     """Validate configuration parameters."""
@@ -283,6 +285,61 @@ def process_action(action, model_family):
     return action
 
 
+import h5py
+import cv2
+
+def save_data(save_path, count, obs_image_array, wrist_image_array, state_array, joint_state_array, action_array, is_correction_array):
+    file_path = os.path.join(save_path, 'motionplanning', 'data.h5')
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
+    count -= 1
+
+    if count == 0:
+        with h5py.File(file_path, 'w') as f:
+            traj = f.create_group(f'traj_{count}')
+
+            traj.create_group("obs").create_group("agent").create_dataset('state', data=np.array(state_array))
+            traj["obs"]["agent"].create_dataset('joint_state', data=np.array(joint_state_array))
+            traj.create_dataset('is_correction', data=np.array(is_correction_array))
+            traj.create_dataset('actions', data=np.array(action_array))
+    else:
+        with h5py.File(file_path, 'a') as f:
+            traj = f.create_group(f'traj_{count}')
+
+            traj.create_group("obs").create_group("agent").create_dataset('state', data=np.array(state_array))
+            traj["obs"]["agent"].create_dataset('joint_state', data=np.array(joint_state_array))
+            traj.create_dataset('is_correction', data=np.array(is_correction_array))
+            traj.create_dataset('actions', data=np.array(action_array))
+    
+    count_head = count // 100
+    count_tail = count % 100
+    image_save_path = os.path.join(save_path, 'full', str(count_head), str(count_tail))
+
+    if not os.path.exists(image_save_path):
+        os.makedirs(image_save_path)
+    else:
+        for f in os.listdir(image_save_path):
+            file_path = os.path.join(image_save_path, f)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+
+    for i, img in enumerate(obs_image_array):
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        cv2.imwrite(os.path.join(image_save_path, f"{i}.png"), img_rgb)
+
+    image_save_path = os.path.join(save_path, 'wrist', str(count_head), str(count_tail))
+    if not os.path.exists(image_save_path):
+        os.makedirs(image_save_path)
+    else:
+        for f in os.listdir(image_save_path):
+            file_path = os.path.join(image_save_path, f)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+
+    for i, img in enumerate(wrist_image_array):
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        cv2.imwrite(os.path.join(image_save_path, f"{i}.png"), img_rgb)
+
 def run_episode(
     cfg: GenerateConfig,
     env,
@@ -295,6 +352,7 @@ def run_episode(
     noisy_action_projector=None,
     initial_state=None,
     log_file=None,
+    total_count=0,
 ):
     """Run a single episode in the environment."""
     # Reset environment
@@ -318,8 +376,37 @@ def run_episode(
     replay_images = []
     max_steps = TASK_MAX_STEPS[cfg.task_suite_name]
 
+    goal_obj_pose = env.env.object_states_dict["wooden_cabinet_1_middle_region"].get_geom_state()
+    
+    goal_pos = np.array([goal_obj_pose["pos"][0], goal_obj_pose["pos"][1] + 0.2, goal_obj_pose["pos"][2]]).astype(np.float32)
+    goal_quat = np.array([0.707, 0, 0, 0.707]).astype(np.float32)
+
+    goal_pos_2 = np.array([goal_obj_pose["pos"][0], goal_obj_pose["pos"][1] + 0.05, goal_obj_pose["pos"][2]]).astype(np.float32)
+    goal_pos_3 = np.array([goal_obj_pose["pos"][0], goal_obj_pose["pos"][1] + 0.3, goal_obj_pose["pos"][2]]).astype(np.float32)
+
+    stage_1_step = 120
+    stage_2_step = 55
+    stage_3_step = 10
+    stage_4_step = 55
+
+    correction_t = 0
+
     # Run episode
     success = False
+    do_correction = False
+
+    max_steps = max_steps * 0.6
+
+    action_array = []
+    action_correction_array = []
+
+    save_action_array = []
+    save_state_array = []
+    save_joint_state_array = []
+    save_obs_image_array = []
+    save_wrist_image_array = []
+    is_correction_array = []
+
     try:
         while t < max_steps + cfg.num_steps_wait:
             # Do nothing for the first few timesteps to let objects stabilize
@@ -331,6 +418,12 @@ def run_episode(
             # Prepare observation
             observation, img = prepare_observation(obs, resize_size)
             replay_images.append(img)
+
+            save_joint_state_array.append(obs["robot0_joint_pos"])
+            save_obs_image_array.append(obs["agentview_image"])
+            save_wrist_image_array.append(obs["robot0_eye_in_hand_image"])
+            save_state_array.append(observation["state"])
+            is_correction_array.append(do_correction)
 
             # If action queue is empty, requery model
             if len(action_queue) == 0:
@@ -354,17 +447,121 @@ def run_episode(
             # Process action
             action = process_action(action, cfg.model_family)
 
-            # Execute action in environment
+            if do_correction:
+                if correction_t < stage_1_step + cfg.num_steps_wait:
+                    # Execute action in environment
+                    action[-1] = -1
+                    action[0] = (goal_pos[0] - obs["robot0_eef_pos"][0]) * 3
+                    action[1] = (goal_pos[1] - obs["robot0_eef_pos"][1]) * 3
+                    action[2] = (goal_pos[2] - obs["robot0_eef_pos"][2]) * 3
+
+                    current_pose = T.pose2mat((obs["robot0_eef_pos"], obs["robot0_eef_quat"]))
+                    target_pose = T.pose2mat((goal_pos, goal_quat))
+
+                    rot0 = R.from_matrix(current_pose[:3, :3])
+                    rot1 = R.from_matrix(target_pose[:3, :3])
+
+                    delta_rot = rot1 * rot0.inv()
+                    delta_euler_angle = delta_rot.as_euler('xyz', degrees=False)
+
+                    action[3] = delta_euler_angle[0] * 0.1
+                    action[4] = delta_euler_angle[1] * 0.1
+                    action[5] = delta_euler_angle[2] * 0.1
+                elif correction_t < stage_1_step + stage_2_step + cfg.num_steps_wait:
+                    action[-1] = -1
+                    action[0] = (goal_pos_2[0] - obs["robot0_eef_pos"][0]) * 3
+                    action[1] = (goal_pos_2[1] - obs["robot0_eef_pos"][1]) * 3
+                    action[2] = (goal_pos_2[2] - obs["robot0_eef_pos"][2]) * 3
+                    action[3] = 0
+                    action[4] = 0
+                    action[5] = 0
+                elif correction_t < stage_1_step + stage_2_step + stage_3_step + cfg.num_steps_wait:
+                    action[-1] = 1
+                    action[0] = 0
+                    action[1] = 0
+                    action[2] = 0
+                    action[3] = 0
+                    action[4] = 0
+                    action[5] = 0
+                else:
+                    action[-1] = 1
+                    action[0] = (goal_pos_3[0] - obs["robot0_eef_pos"][0]) * 3
+                    action[1] = (goal_pos_3[1] - obs["robot0_eef_pos"][1]) * 3
+                    action[2] = (goal_pos_3[2] - obs["robot0_eef_pos"][2]) * 3
+                    action[3] = 0
+                    action[4] = 0
+                    action[5] = 0
+                
+                correction_t += 1
+
+            if do_correction:
+                action_correction_array.append(action)
+            else:
+                action_array.append(action)
+
+            save_action_array.append(action)
+
             obs, reward, done, info = env.step(action.tolist())
+            # print("test:", env.env.object_states_dict["wooden_cabinet_1_middle_region"].get_geom_state())
+            # print("OBS?:", obs["robot0_joint_pos"], obs["robot0_eef_pos"], obs["robot0_eef_quat"], obs["robot0_gripper_qpos"])
             if done:
                 success = True
                 break
-            t += 1
+            if t + 1 < max_steps + cfg.num_steps_wait:
+                t += 1
+            else:
+                do_correction = True
+            
+            if do_correction and correction_t > stage_1_step + stage_2_step + stage_3_step + stage_4_step:
+                break
 
     except Exception as e:
         log_message(f"Episode error: {e}", log_file)
 
-    return success, replay_images
+    print("task_description:", task_description)
+
+    # # Save the traj data
+    # save_dir = "/nvme_data/liangzhi/dataset/libero_correction/goal/"
+    # os.makedirs(save_dir, exist_ok=True)
+
+    # if do_correction and success:
+    #     total_count += 1
+    #     save_data(save_dir, 
+    #             total_count, 
+    #             save_obs_image_array, 
+    #             save_wrist_image_array, 
+    #             save_state_array, 
+    #             save_joint_state_array, 
+    #             save_action_array, 
+    #             is_correction_array)
+
+    if total_count >= 100:
+        exit(0)
+
+    # Plot the action
+    # save_dir = "./rollouts/image_test/"
+    # os.makedirs(save_dir, exist_ok=True)
+
+    # action_array = np.array(action_array)
+    # action_correction_array = np.array(action_correction_array)
+    # num_fig = action_array.shape[-1]
+    
+    # if len(action_array) != 0 and len(action_correction_array) != 0:
+
+    
+    #     fig, axs = plt.subplots(num_fig, 1, figsize=(10, 10))
+
+    #     for i in range(num_fig):
+    #         axs[i].plot(np.arange(len(action_array)), action_array[:, i], label="Action")
+    #         axs[i].plot(np.arange(len(action_array), len(action_array) + len(action_correction_array)), action_correction_array[:, i], label="Action Correction")
+    #         axs[i].set_title(f"Action {i}")
+    #         axs[i].legend()
+
+    #     num_files = len(os.listdir(save_dir))
+
+    #     plt.savefig(os.path.join(save_dir, f"{num_files}.png"))
+
+    return success, replay_images, total_count
 
 
 def run_task(
@@ -380,6 +577,7 @@ def run_task(
     total_episodes=0,
     total_successes=0,
     log_file=None,
+    total_count=0,
 ):
     """Run evaluation for a single task."""
     # Get task
@@ -399,7 +597,7 @@ def run_task(
         # Handle initial state
         if cfg.initial_states_path == "DEFAULT":
             # Use default initial state
-            initial_state = initial_states[episode_idx]
+            initial_state = initial_states[episode_idx // 5]
         else:
             # Get keys for fetching initial episode state from JSON
             initial_states_task_key = task_description.replace(" ", "_")
@@ -416,7 +614,7 @@ def run_task(
         log_message(f"Starting episode {task_episodes + 1}...", log_file)
 
         # Run episode
-        success, replay_images = run_episode(
+        success, replay_images, total_count = run_episode(
             cfg,
             env,
             task_description,
@@ -428,6 +626,7 @@ def run_task(
             noisy_action_projector,
             initial_state,
             log_file,
+            total_count,
         )
 
         # Update counters
@@ -463,7 +662,7 @@ def run_task(
             }
         )
 
-    return total_episodes, total_successes
+    return total_episodes, total_successes, total_count
 
 
 @draccus.wrap()
@@ -498,10 +697,12 @@ def eval_libero(cfg: GenerateConfig) -> float:
 
     log_message(f"Task suite: {cfg.task_suite_name}", log_file)
 
+    total_count = 0
+
     # Start evaluation
     total_episodes, total_successes = 0, 0
     for task_id in tqdm.tqdm(range(num_tasks)):
-        total_episodes, total_successes = run_task(
+        total_episodes, total_successes, total_count = run_task(
             cfg,
             task_suite,
             task_id,
@@ -514,6 +715,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
             total_episodes,
             total_successes,
             log_file,
+            total_count
         )
 
     # Calculate final success rate
