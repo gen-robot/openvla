@@ -47,13 +47,13 @@ def describe_move(move_vec):
     return description
 
 
-def classify_movement(move, threshold=0.03):
+def classify_movement(move, threshold=0.01):
     diff = move[-1] - move[0]
 
     if np.sum(np.abs(diff[:3])) > 3 * threshold:
         diff[:3] *= 3 * threshold / np.sum(np.abs(diff[:3]))
 
-    diff[3:6] /= 10
+    diff[3:6] /= 1
 
     move_vec = 1 * (diff > threshold) - 1 * (diff < -threshold)
 

@@ -1,22 +1,40 @@
 import cv2
+import os
 import matplotlib
 import mediapy
 import numpy as np
 import torch
+import json
+import tqdm
+import tensorflow as tf
 from matplotlib import pyplot as plt
 from PIL import Image
 from transformers import SamModel, SamProcessor, pipeline
+import tensorflow_datasets as tfds
+import argparse
+import tqdm
 
-# import pdb; pdb.set_trace()
+# Configure Tensorflow with *no GPU devices* (to prevent clobber with PyTorch)
+tf.config.set_visible_devices([], "GPU")
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--id", type=int, default=0)
+parser.add_argument("--gpu", type=int, default=None)
+parser.add_argument("--splits", type=int, default=2)
+parser.add_argument("--dataset_name", type=str, default="cobot_rlds")
+parser.add_argument("--data_dir", type=str, default="datasets")
+args = parser.parse_args()
+
 checkpoint = "google/owlvit-base-patch16"
 detector = pipeline(model=checkpoint, task="zero-shot-object-detection")
-sam_model = SamModel.from_pretrained("facebook/sam-vit-base")
+device = torch.device(f"cuda:{args.gpu}" if args.gpu is not None else "cuda" if torch.cuda.is_available() else "cpu")
+sam_model = SamModel.from_pretrained("facebook/sam-vit-base").to(device)
 sam_processor = SamProcessor.from_pretrained("facebook/sam-vit-base")
-image_dims = (640, 480) #(256, 256)
-image_label = "cam_high" #"image_0"
+image_dims = (256, 256) #(256, 256)
+image_label = "image" #"image_0"
+ee_pose_label = "state"
 
-
-def get_bounding_boxes(img, prompt="the black robotic gripper"):
+def get_bounding_boxes(img, prompt="the robotic gripper"):
     predictions = detector(img, candidate_labels=[prompt], threshold=0.01)
 
     return predictions
@@ -53,13 +71,16 @@ def get_gripper_mask(img, pred):
     ]
 
     inputs = sam_processor(img, input_boxes=[[[box]]], return_tensors="pt")
-
+    # make sure inputs' devices is the same as sam_model's device
+    inputs = inputs.to(sam_model.device)
     with torch.no_grad():
         outputs = sam_model(**inputs)
 
     mask = sam_processor.image_processor.post_process_masks(
         outputs.pred_masks, inputs["original_sizes"], inputs["reshaped_input_sizes"]
-    )[0][0][0].numpy()
+    )[0][0][0]
+    # cpu().numpy() if mask is on gpu else .numpy()
+    mask = mask.cpu().numpy() if mask.device.type == "cuda" else mask.numpy()
 
     return mask
 
@@ -111,7 +132,7 @@ def mask_to_pos_naive(mask):
     weight = pos[:, :, 0] + pos[:, :, 1]
     min_pos = np.argmax((weight * mask).flatten())
 
-    return min_pos % image_dims[0] - (image_dims[0] / 16), min_pos // image_dims[0] - (image_dims[0] / 24)
+    return min_pos % image_dims[0] - (image_dims[0] / 16), min_pos // image_dims[0] - (image_dims[0] / 16) #24)
 
 
 def get_gripper_pos(episode_id, frame, builder, plot=True):
@@ -164,10 +185,13 @@ def get_gripper_pos_raw(img):
 def process_trajectory(episode):
     images = [step["observation"][image_label] for step in episode["steps"]]
     # states = [step["observation"]["state"] for step in episode["steps"]]
-    print([step.keys() for step in episode["steps"]][0])
-    states = [step["ee_pose"] for step in episode["steps"]]
+    states = [step["observation"][ee_pose_label] for step in episode["steps"]]
 
-    raw_trajectory = [(*get_gripper_pos_raw(img), state) for img, state in zip(images, states)]
+    # raw_trajectory = [(*get_gripper_pos_raw(img), state) for img, state in zip(images, states)]
+    raw_trajectory = []
+    for img, state in tqdm.tqdm(zip(images, states), desc="Processing trajectory", total=len(images)):
+        results = get_gripper_pos_raw(img)
+        raw_trajectory.append([*results, state])
 
     prev_found = list(range(len(raw_trajectory)))
     next_found = list(range(len(raw_trajectory)))
@@ -194,10 +218,18 @@ def process_trajectory(episode):
     return raw_trajectory
 
 
-def get_corrected_positions(episode_id, builder, plot=False):
+def get_corrected_positions(episode_id, builder, plot=False, output_dir=None):
     ds = builder.as_dataset(split=f"train[{episode_id}:{episode_id + 1}]")
     episode = next(iter(ds))
     t = process_trajectory(episode)
+    metadata = dict()
+    for key in episode["episode_metadata"].keys():
+        if isinstance(episode["episode_metadata"][key], tf.Tensor):
+            metadata[key] = episode["episode_metadata"][key].numpy()
+            if isinstance(metadata[key], bytes):
+                metadata[key] = metadata[key].decode()
+        else:
+            metadata[key] = episode["episode_metadata"][key]
 
     images = [step["observation"][image_label] for step in episode["steps"]]
     images = [img.numpy() for img in images]
@@ -220,20 +252,79 @@ def get_corrected_positions(episode_id, builder, plot=False):
             cv2.circle(img, (int(p[0]), int(p[1])), radius=5, color=(255, 0, 0), thickness=-1)
             for img, p in zip(images, pr_pos)
         ]
-        mediapy.write_video("gripper_trajectory.mp4", images, fps=10)
+        mediapy.write_video(f"{output_dir}/gripper_trajectory_{episode_id}.mp4", images, fps=10)
 
-    return pr_pos
+    return pr_pos, metadata
+
+
+def jsonify(data):
+    if isinstance(data, np.integer):
+        return int(data)
+    if isinstance(data, np.floating):
+        return float(data)
+    if isinstance(data, np.ndarray):
+        return data.tolist()
+    if isinstance(data, dict):
+        return {key: jsonify(value) for key, value in data.items()}
+    if isinstance(data, list):
+        return [jsonify(item) for item in data]
+    if isinstance(data, tuple):
+        return [jsonify(item) for item in data]
+    return data
 
 
 if __name__ == "__main__":
-    import tensorflow_datasets as tfds
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--episode_id", type=int, default=0)
-    parser.add_argument("--dataset_name", type=str, default="cobot_rlds")
-    parser.add_argument("--dataset_dir", type=str, default="datasets")
-    args = parser.parse_args()
+    json_data = {}
 
-    builder = tfds.builder(args.dataset_name, data_dir=args.dataset_dir)
-    pr_pos = get_corrected_positions(args.episode_id, builder, plot=True)
-    import pdb; pdb.set_trace()
+    builder = tfds.builder(args.dataset_name, data_dir=args.data_dir)
+    total_num_episodes = builder.info.splits["train"].num_examples
+
+    def get_id_range(id, splits, total_num_episodes):
+        split_percents = 100 // splits
+        start = id * split_percents
+        end = (id + 1) * split_percents
+        start_episode_id = int(total_num_episodes * start / 100)
+        end_episode_id = int(total_num_episodes * end / 100)
+        if id == splits - 1:  # Last split should include the final episode
+            end_episode_id = total_num_episodes
+        return start_episode_id, end_episode_id
+
+    # run over id to check if no id is ignored
+    # Check if all episodes will be covered by the splits
+    all_episodes = set(range(total_num_episodes))
+    covered_episodes = set()
+    
+    for id in range(args.splits):
+        start_id, end_id = get_id_range(id, args.splits, total_num_episodes)
+        episodes_in_split = set(range(start_id, end_id))
+        covered_episodes.update(episodes_in_split)
+        print(f"Split {id}: Episodes {start_id} to {end_id-1} ({len(episodes_in_split)} episodes)")
+    
+    missing_episodes = all_episodes - covered_episodes
+    if missing_episodes:
+        print(f"WARNING: {len(missing_episodes)} episodes will not be processed by any split!")
+        print(f"Missing episodes: {sorted(missing_episodes)}")
+    else:
+        print(f"All {total_num_episodes} episodes will be covered by the splits.")
+    
+    # Get the range for the current split
+    start_episode_id, end_episode_id = get_id_range(args.id, args.splits, total_num_episodes)
+    print(f"This process (ID {args.id}) will handle episodes {start_episode_id} to {end_episode_id-1}")
+    
+    episode_indexes = list(range(start_episode_id, end_episode_id))
+
+    output_dir = f"./outputs/{args.dataset_name}/gripper_positions"
+    video_dir = f"./outputs/{args.dataset_name}/gripper_positions/videos/{args.id}"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    if not os.path.exists(video_dir):
+        os.makedirs(video_dir)
+
+    for index in tqdm.tqdm(episode_indexes, desc=f"Processing episodes {args.id} / {args.splits}"):
+        pr_pos, metadata = get_corrected_positions(index, builder, plot=True, output_dir=video_dir)
+        file_path, episode_id = metadata["file_path"], metadata["episode_id"]
+        if file_path not in json_data.keys():
+            json_data[file_path] = {}
+        json_data[file_path][episode_id] = {"gripper_positions": pr_pos, "metadata": metadata}
+        with open(f"{output_dir}/gripper_positions_{args.id}.json", "w") as f:
+            json.dump(jsonify(json_data), f)

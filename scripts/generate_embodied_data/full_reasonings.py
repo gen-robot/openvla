@@ -2,43 +2,18 @@ import json
 import os
 import re
 import time
+import tqdm
 
+import numpy as np
 import google.generativeai as genai
 from google.api_core.exceptions import ResourceExhausted
 
 from scripts.generate_embodied_data.primitive_movements import get_move_primitives_episode
+from scripts.generate_embodied_data.utils import Gemini
 
-
-class Gemini:
-    def __init__(self):
-        api_key = os.environ.get("GEMINI_API_KEY", None)
-        assert api_key is not None, "GEMINI_API_KEY is not set"
-        genai.configure(api_key=api_key)
-
-        self.model = genai.GenerativeModel("gemini-2.0-flash")
-
-    def safe_call(self, f):
-        while True:
-            try:
-                res = f()
-                return res
-            except ResourceExhausted:
-                time.sleep(5)
-
-    def generate(self, prompt):
-        chat = self.safe_call(lambda: self.model.start_chat(history=[]))
-        response = self.safe_call(lambda: chat.send_message(prompt).text)
-
-        for i in range(8):
-            if "FINISHED" in response:
-                print(f"n_retries: {i}")
-                return response
-
-            response = response + self.safe_call(lambda: chat.send_message("Truncated, please continue.").text)
-
-        print(f"n_retries: {iter}")
-
-        return None
+import tensorflow as tf
+# Configure Tensorflow with *no GPU devices* (to prevent clobber with PyTorch)
+tf.config.set_visible_devices([], "GPU")
 
 
 def build_prompt(features, language_instruction, caption=None, list_only_moves=False):
@@ -56,6 +31,8 @@ def build_prompt(features, language_instruction, caption=None, list_only_moves=F
                 feature_value = features[key][i]
                 if isinstance(feature_value, str):
                     feature_value = f'"{feature_value}"'
+                elif isinstance(feature_value, np.ndarray):
+                    feature_value = feature_value.tolist()
 
                 structured_features = structured_features + f'        "{key}": {feature_value},\n'
 
@@ -76,8 +53,9 @@ def build_prompt(features, language_instruction, caption=None, list_only_moves=F
             '- "state_3d" are the current 3d coordinates of the robotic arm end effector; '
             "moving forward increases the first coordinate; moving left increases the second "
             "coordinate; moving up increases the third coordinate,\n"
-            '- "move_primitive" describes the move that is about to be executed,\n'
-            '- "gripper_position" denotes the location of the gripper in the 256x256 image observation'
+            '- "euler" represents the orientation of the end effector in Euler angles (roll, pitch, yaw),\n'
+            '- "gripper_openness" indicates how open the gripper is, with higher values meaning more open,\n'
+            '- "move_primitive" describes the move that is about to be executed,'
         )
 
     if caption is None:
@@ -148,6 +126,7 @@ break_line}and place it inside a tag <plan>.
 break_line}inside a tag <subtask>.
 - Describe why the chosen high-level step should be executed now, which features of the current environment influence {
 break_line}that decision, and how it should be done. Place it within a tag <subtask_reason>.
+- Identify and describe the key objects that are relevant for the current subtask, and place them in a list of object names inside a tag <relevant_objects>.
 - Describe the current primitive movement of the arm that needs to be executed, and place it inside a tag <move>.
 - Describe why the chosen movement should be executed now and which features of the current environment influence that {
 break_line}decision. Place it inside a tag <move_reason>.
@@ -159,8 +138,11 @@ Here is a breakdown of what needs to be done:
 - Describe the task.
 - Describe the high-level movements that were executed, based on the completed task and the listed features.
 - Describe the plan for the solution that allowed the robot to complete the task successfully.
-- For each step on the trajectory, describe the reasoning that leads to determining the correct action. The reasoning {
-break_line}should be descriptive and precise. You should provide exactly one reasoning string for each step on the {
+- For each step on the trajectory:
+  1. Describe the reasoning that leads to determining the correct action
+  2. Identify the relevant objects for the current subtask
+  3. Provide justification for the movement
+- The reasoning should be descriptive and precise. You should provide exactly one reasoning string for each step on the {
 break_line}trajectory specified by `trajectory_features`.
 - At the very end of the response, write a single label FINISHED to indicate that the answer is complete."""
 
@@ -196,7 +178,8 @@ def find_task_occurrences(input_string, tags):
     return all_matches
 
 
-def extract_reasoning_dict(reasoning_output, tags=("task", "plan", "subtask", "subtask_reason", "move", "move_reason")):
+def extract_reasoning_dict(reasoning_output, tags=("task", "plan", "subtask", "subtask_reason", "move", "move_reason",
+                                                   "relevant_objects", "primitive_actions", "action_reason", )):
     if reasoning_output is None:
         return dict()
 
@@ -213,15 +196,26 @@ def extract_reasoning_dict(reasoning_output, tags=("task", "plan", "subtask", "s
     return trajectory
 
 
-def get_reasoning_dict(features, metadata, lm):
+def get_reasoning_dict(features, metadata, lm, logging_name=None):
     language_instruction = metadata["language_instruction"]
     caption = metadata["caption"] if "caption" in metadata.keys() else None
 
-    prompt = build_prompt(features, language_instruction, caption=caption, list_only_moves=True)
+    prompt = build_prompt(features, language_instruction, caption=caption, list_only_moves=False)
     print("metadata:", metadata, "\nprompt:", prompt)
 
-    reasoning_output = lm.generate(prompt)
-    # import pdb; pdb.set_trace()
+    # add a time bar to log the time taken to generate the reasoning
+    with tqdm.tqdm(total=100, desc=f"Generating reasoning for {logging_name}") as pbar:
+        max_attempts = 3
+        reasoning_output = None
+        for attempt in range(max_attempts):
+            reasoning_output = lm.generate(prompt)
+            if reasoning_output is not None:
+                break
+            print(f"Attempt {attempt+1}/{max_attempts} failed. Retrying...")
+        pbar.update(100)
+    if reasoning_output is None:
+        print("reasoning output is None.")
+        import pdb; pdb.set_trace()
     print("reasoning:", reasoning_output)
 
     # save reasoning output to file
@@ -235,33 +229,55 @@ def get_reasoning_dict(features, metadata, lm):
     return extract_reasoning_dict(reasoning_output)
 
 
-def build_single_reasoning(episode_id, builder, lm, captions):
-    ds = builder.as_dataset(split=f"train[{episode_id}:{episode_id + 1}]")
+def build_single_reasoning(episode_index, builder, lm, captions):
+    ds = builder.as_dataset(split=f"train[{episode_index}:{episode_index + 1}]")
     episode = next(iter(ds))
+    total_episode_num = builder.info.splits["train"].num_examples
 
     ft = dict()
 
     ft["state_3d"] = [list(step["observation"]["state"][:3].numpy()) for step in episode["steps"]]
+    ft["euler"] = [list(step["observation"]["state"][3:6].numpy()) for step in episode["steps"]]
+    ft["gripper_openness"] = [step["observation"]["state"][-1].numpy() for step in episode["steps"]]
 
     move_primitives = get_move_primitives_episode(episode)
     ft["move_primitive"] = [move[0] for move in move_primitives]
 
     mt = {
-        "episode_id": str(int(episode["episode_metadata"]["episode_id"].numpy())),
+        "episode_id": episode["episode_metadata"]["episode_id"].numpy(),
         "file_path": str(episode["episode_metadata"]["file_path"].numpy())[2:-1],
         "n_steps": len(episode["steps"]),
         "language_instruction": str(next(iter(episode["steps"]))["language_instruction"].numpy().decode()),
     }
 
+    if isinstance(mt["episode_id"], bytes):
+        mt["episode_id"] = mt["episode_id"].decode()
     mt["caption"] = captions[mt["file_path"]][mt["episode_id"]]["caption"]
 
-    reasoning = get_reasoning_dict(ft, mt, lm)
+    logging_name = f"Episode {episode_index} / {total_episode_num}"
+    reasoning = get_reasoning_dict(ft, mt, lm, logging_name)
     entry = {"reasoning": reasoning, "features": ft, "metadata": mt}
 
     return entry
 
 
-def generate_reasonings(builder, episode_ids, save_path="reasonings.json"):
+def jsonify(data):
+    if isinstance(data, np.integer):
+        return int(data)
+    if isinstance(data, np.floating):
+        return float(data)
+    if isinstance(data, np.ndarray):
+        return data.tolist()
+    if isinstance(data, dict):
+        return {key: jsonify(value) for key, value in data.items()}
+    if isinstance(data, list):
+        return [jsonify(item) for item in data]
+    if isinstance(data, tuple):
+        return [jsonify(item) for item in data]
+    return data
+
+
+def generate_reasonings(builder, episode_indexes, captions_dict, save_path="reasonings.json"):
     reasonings = dict()
     lm = Gemini()
 
@@ -272,38 +288,23 @@ def generate_reasonings(builder, episode_ids, save_path="reasonings.json"):
 
         print("loaded reasonings:", sum([len(v) for v in reasonings.values()]), "entries")
 
-    with open("captions.json", "r") as captions_file:
-        captions_dict = json.load(captions_file)
+    # with open("captions.json", "r") as captions_file:
+    #     captions_dict = json.load(captions_file)
 
-    for i in episode_ids:
+    for i in episode_indexes:
         entry = build_single_reasoning(i, builder, lm, captions_dict)
 
         if entry["metadata"]["file_path"] in reasonings.keys():
             reasonings[entry["metadata"]["file_path"]][entry["metadata"]["episode_id"]] = entry
+            # reasonings[entry["metadata"]["file_path"]][i] = entry
         else:
             reasonings[entry["metadata"]["file_path"]] = {entry["metadata"]["episode_id"]: entry}
+            # reasonings[entry["metadata"]["file_path"]] = {i: entry}
 
         print("computed reasoning:", entry)
 
-    import numpy as np
-
-    def jsonify(data):
-        if isinstance(data, np.integer):
-            return int(data)
-        if isinstance(data, np.floating):
-            return float(data)
-        if isinstance(data, np.ndarray):
-            return data.tolist()
-        if isinstance(data, dict):
-            return {key: jsonify(value) for key, value in data.items()}
-        if isinstance(data, list):
-            return [jsonify(item) for item in data]
-        if isinstance(data, tuple):
-            return [jsonify(item) for item in data]
-        return data
-
-    with open(save_path, "w") as out_f:
-        json.dump(jsonify(reasonings), out_f)
+        with open(save_path, "w") as out_f:
+            json.dump(jsonify(reasonings), out_f)
 
 
 
@@ -312,12 +313,63 @@ if __name__ == "__main__":
  
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--episode_id", type=int, default=0)
-    parser.add_argument("--save_path", type=str, default="reasonings.json")
+    parser.add_argument("--id", type=int, default=0)
+    parser.add_argument("--splits", type=int, default=4)
     parser.add_argument("--dataset_name", type=str, default="cobot_rlds")
-    parser.add_argument("--dataset_dir", type=str, default="datasets")
+    parser.add_argument("--data_dir", type=str, default="datasets")
     args = parser.parse_args()
 
-    builder = tfds.builder(args.dataset_name, data_dir=args.dataset_dir)
-    generate_reasonings(builder, [args.episode_id], save_path=args.save_path)
+    result_dir = f"./outputs/{args.dataset_name}"
+
+    with open(os.path.join(result_dir, "captions.json"), "r") as captions_file:
+        captions_dict = json.load(captions_file)
+
+    num_episodes = sum([len(v) for v in captions_dict.values()])
+    print("num_episodes in captions:", num_episodes)
+
+    builder = tfds.builder(args.dataset_name, data_dir=args.data_dir)
+    total_num_episodes = builder.info.splits["train"].num_examples
+    print("num_episodes in dataset:", total_num_episodes)
+
+    if num_episodes != total_num_episodes:
+        print("[WARNING] num_episodes in captions and dataset are not the same")
+
+    def get_id_range(id, splits, total_num_episodes):
+        split_percents = 100 // splits
+        start = id * split_percents
+        end = (id + 1) * split_percents
+        start_episode_id = int(total_num_episodes * start / 100)
+        end_episode_id = int(total_num_episodes * end / 100)
+        if id == splits - 1:  # Last split should include the final episode
+            end_episode_id = total_num_episodes
+        return start_episode_id, end_episode_id
+    
+    # run over id to check if no id is ignored
+    # Check if all episodes will be covered by the splits
+    all_episodes = set(range(total_num_episodes))
+    covered_episodes = set()
+    
+    for id in range(args.splits):
+        start_id, end_id = get_id_range(id, args.splits, total_num_episodes)
+        episodes_in_split = set(range(start_id, end_id))
+        covered_episodes.update(episodes_in_split)
+        print(f"Split {id}: Episodes {start_id} to {end_id-1} ({len(episodes_in_split)} episodes)")
+    
+    missing_episodes = all_episodes - covered_episodes
+    if missing_episodes:
+        print(f"WARNING: {len(missing_episodes)} episodes will not be processed by any split!")
+        print(f"Missing episodes: {sorted(missing_episodes)}")
+    else:
+        print(f"All {total_num_episodes} episodes will be covered by the splits.")
+    
+    # Get the range for the current split
+    start_episode_id, end_episode_id = get_id_range(args.id, args.splits, total_num_episodes)
+    print(f"This process (ID {args.id}) will handle episodes {start_episode_id} to {end_episode_id-1}")
+    
+    episode_indexes = list(range(start_episode_id, end_episode_id))
+
+    save_path = os.path.join(result_dir, f"reasonings/reasonings_{args.id}.json")
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    generate_reasonings(builder, episode_indexes, captions_dict, save_path=save_path)
 

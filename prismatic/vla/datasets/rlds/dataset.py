@@ -61,7 +61,8 @@ def make_dataset_from_rlds(
     num_parallel_reads: int = tf.data.AUTOTUNE,
     num_parallel_calls: int = tf.data.AUTOTUNE,
     enable_cot: bool = False,
-    reasoning_dataset_path: str = f"{os.environ['HOME']}/.cache/reasonings_dataset.json",
+    # reasoning_dataset_path: str = f"{os.environ['HOME']}/.cache/reasonings_dataset.json",
+    reasoning_dataset_dir: str = None,
     **kwargs,
 ) -> Tuple[dl.DLataset, dict]:
     """
@@ -138,21 +139,27 @@ def make_dataset_from_rlds(
     if language_key is not None:
         REQUIRED_KEYS.add(language_key)
 
-    load_cot_labels = ('bridge' in name) and enable_cot
+    load_cot_labels = enable_cot #('bridge' in name) and enable_cot
 
     if load_cot_labels:
-        if os.path.isfile(reasoning_dataset_path):
-            print(f"Loading from local checkpoint path `{reasoning_dataset_path}`.")
-        else:
-            print(f"Dataset file `{reasoning_dataset_path}` not found, loading from HF.")
+        if reasoning_dataset_dir is None:
+            reasoning_dataset_dir = f"{os.path.dirname(__file__)}/../../../../datasets/reasonings"
+            print("reasoning_dataset_dir: ", os.path.abspath(reasoning_dataset_dir))
+        reasoning_dataset_path = os.path.join(reasoning_dataset_dir, f"{name}.json")
+        assert os.path.isfile(reasoning_dataset_path), f"Reasoning dataset for {name} is not found in {reasoning_dataset_dir}"
 
-            download_path = hf_hub_download(
-                repo_id="Embodied-CoT/embodied_features_bridge",
-                filename="embodied_features_bridge.json",
-                repo_type="dataset",
-            )
+        # if os.path.isfile(reasoning_dataset_path):
+        #     print(f"Loading from local checkpoint path `{reasoning_dataset_path}`.")
+        # else:
+        #     print(f"Dataset file `{reasoning_dataset_path}` not found, loading from HF.")
 
-            shutil.copyfile(download_path, reasoning_dataset_path)
+        #     download_path = hf_hub_download(
+        #         repo_id="Embodied-CoT/embodied_features_bridge",
+        #         filename="embodied_features_bridge.json",
+        #         repo_type="dataset",
+        #     )
+
+        #     shutil.copyfile(download_path, reasoning_dataset_path)
 
         with open(reasoning_dataset_path, "r") as f:
             reasoning_dataset = json.load(f)
@@ -212,18 +219,21 @@ def make_dataset_from_rlds(
                 )
             task["language_instruction"] = traj.pop(language_key)
 
-        # import pdb; pdb.set_trace()
-        reasonings = tf.repeat("", traj_len)
+        reasonings = tf.repeat("nonono", traj_len)
         metadata_dict = dict()
         if 'episode_id' in traj["traj_metadata"].get("episode_metadata", {}).keys():
             file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
             episode_id = traj["traj_metadata"]["episode_metadata"]["episode_id"][0]
-
+            # tf.print("file_name: ", file_name)
+            # tf.print("episode_id: ", episode_id)
+            file_names = tf.repeat(file_name, traj_len)
+            episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
             if load_cot_labels:
-                file_names = tf.repeat(file_name, traj_len)
-                episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
                 indices = tf.as_string(tf.range(traj_len))
-                reasonings = reasoning_dataset.lookup(file_names + "_" + episode_ids + "_" + indices)
+                lookup_keys = file_names + "_" + episode_ids + "_" + indices
+                # tf.print("lookup_keys: ", lookup_keys[0])
+                reasonings = reasoning_dataset.lookup(lookup_keys)
+                # tf.print("lookup_keys: ", lookup_keys[0], "reasonings: ", reasonings[0], "file_names: ", file_names[0], "episode_ids: ", episode_ids[0], "indices: ", indices[0])
 
                 metadata_dict = {
                     "file_name": tf.repeat(file_name, traj_len),

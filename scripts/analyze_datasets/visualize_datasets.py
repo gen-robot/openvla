@@ -112,10 +112,10 @@ def main(cfg: Config):
     )
 
     os.makedirs(f"outputs/{cfg.name}/{timestamp}", exist_ok=True)
-    f = open(f"outputs/{cfg.name}/{timestamp}/datasets.csv", "w")
-    f.write("file_path, episode_id, episode_length, language_instruction, has_reasoning, video_path\n")
+    with open(f"outputs/{cfg.name}/{timestamp}/datasets.csv", "w") as f:
+        f.write("file_path, episode_id, episode_length, language_instruction, has_reasoning, video_path\n")
 
-    for ep_idx, ep_data in tqdm(enumerate(dataset), desc="Visualizing dataset"):
+    for ep_idx, ep_data in tqdm(enumerate(dataset), desc="Visualizing dataset", total=len(dataset)):
         file_name = None
         episode_id = None
         language_instruction = None
@@ -133,6 +133,8 @@ def main(cfg: Config):
                 file_name = step_data.get("file_name", b"").decode()
             if episode_id is None:
                 episode_id = step_data.get("episode_id", str(ep_idx))
+                # if isinstance(episode_id, bytes):
+                #     episode_id = episode_id.decode()
             if language_instruction is None:
                 language_instruction = step_data["task"]["language_instruction"].decode()
             image_primary = step_data["observation"]["image_primary"][0]
@@ -140,11 +142,13 @@ def main(cfg: Config):
             reasoning = step_data["reasoning"].decode()
             if i == 0:
                 has_reasoning = len(reasoning) > 0
+            if not has_reasoning:
+                break
 
-            print(f">>>> Episode {episode_id} Step {i} / {len(ep_data)}")
-
-            print("Instruction: ", language_instruction)
-            print("Reasoning: ", reasoning)
+            if i == 0:
+                print(f">>>> Episode {episode_id} Step {i} / {len(ep_data)}")
+                print("Instruction: ", language_instruction)
+                print("Reasoning: ", reasoning)
 
             if len(reasoning) > 0:
                 reasoning_parts = reasoning.split("@")
@@ -185,28 +189,30 @@ def main(cfg: Config):
                 vla_action = action_list.pop(0)
                 vla_actions.append(vla_action)
 
-        short_instruction = "_".join(language_instruction.rstrip(".").split(" "))
-        video_path = f"{short_instruction.rstrip('.').lower()}_ep{episode_id}"
-        images_to_video(images, f"outputs/{cfg.name}/{timestamp}/videos", video_name=video_path, fps=5)
-        if len(vla_images) > 0:
+        video_path = None
+        if len(images) > 10:
+            short_instruction = "_".join(language_instruction.rstrip(".").split(" "))
+            video_path = f"{short_instruction.rstrip('.').lower()}_ep{episode_id}"
+            images_to_video(images, f"outputs/{cfg.name}/{timestamp}/videos", video_name=video_path, fps=20)
+        if len(vla_images) > 10:
             images_to_video(vla_images, f"outputs/{cfg.name}/{timestamp}/vla_videos", video_name=video_path, fps=5)
 
-        f.write(f"{file_name},{episode_id},{len(images)},{language_instruction},{has_reasoning},{video_path}\n")
+        with open(f"outputs/{cfg.name}/{timestamp}/datasets.csv", "a") as f:
+            f.write(f"{file_name},{episode_id},{len(images)},{language_instruction},{has_reasoning},{video_path}\n")
 
-        actions = np.array(actions)
-        if len(vla_actions) > 0:
-            vla_actions = np.array(vla_actions)
-        fig, axs = plt.subplots(len(actions[0]), 1, figsize=(10, len(actions)))
-        for i in range(len(actions[0])):
-            axs[i].plot(actions[:, i], label="label")
+        if len(images) > 10:
+            actions = np.array(actions)
             if len(vla_actions) > 0:
-                axs[i].plot(vla_actions[:, i], label="pred")
-            axs[i].legend()
-        plt.tight_layout()
-        plt.savefig(f"outputs/{cfg.name}/{timestamp}/{video_path}_actions.png")
-        plt.close()
-
-    f.close()
+                vla_actions = np.array(vla_actions)
+            fig, axs = plt.subplots(len(actions[0]), 1, figsize=(10, len(actions)))
+            for i in range(len(actions[0])):
+                axs[i].plot(actions[:, i], label="label")
+                if len(vla_actions) > 0:
+                    axs[i].plot(vla_actions[:, i], label="pred")
+                axs[i].legend()
+            plt.tight_layout()
+            plt.savefig(f"outputs/{cfg.name}/{timestamp}/{video_path}_actions.png")
+            plt.close()
 
 if __name__ == "__main__":
     cfg = tyro.cli(Config)

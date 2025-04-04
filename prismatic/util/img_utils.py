@@ -82,3 +82,5 @@ def draw_bboxes(img, bboxes, img_size):
             1,
             cv2.LINE_AA,
         )
+
+    return img

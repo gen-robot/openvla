@@ -35,6 +35,7 @@ class CotTag(enum.Enum):
     VISIBLE_OBJECTS = "VISIBLE OBJECTS:"
     SUBTASK_REASONING = "SUBTASK REASONING:"
     SUBTASK = "SUBTASK:"
+    RELEVANT_OBJECTS = "RELEVANT OBJECTS:"
     MOVE_REASONING = "MOVE REASONING:"
     MOVE = "MOVE:"
     GRIPPER_POSITION = "GRIPPER POSITION:"
@@ -52,6 +53,7 @@ def get_cot_tags_list():
         CotTag.VISIBLE_OBJECTS.value,
         CotTag.SUBTASK_REASONING.value,
         CotTag.SUBTASK.value,
+        CotTag.RELEVANT_OBJECTS.value,
         CotTag.MOVE_REASONING.value,
         CotTag.MOVE.value,
         CotTag.GRIPPER_POSITION.value,
@@ -66,6 +68,7 @@ def get_cot_database_keys():
         CotTag.VISIBLE_OBJECTS.value: "bboxes",
         CotTag.SUBTASK_REASONING.value: "subtask_reason",
         CotTag.SUBTASK.value: "subtask",
+        CotTag.RELEVANT_OBJECTS.value: "relevant_objects",
         CotTag.MOVE_REASONING.value: "move_reason",
         CotTag.MOVE.value: "move",
         CotTag.GRIPPER_POSITION.value: "gripper",
@@ -81,7 +84,7 @@ def make_tf_hash_table(raw_dict):
     def reasoning_dict_to_str(d):
         tags = get_cot_tags_list()[:-1]  # exclude ACTION
         database_keys = get_cot_database_keys()
-        reasoning_parts = [(tag, d[database_keys[tag]]) for tag in tags]
+        reasoning_parts = [(tag, d[database_keys[tag]]) for tag in tags if database_keys[tag] in d.keys()] #
 
         return "@".join(f"{tag}@{part}" for tag, part in reasoning_parts)
 
@@ -99,7 +102,9 @@ def make_tf_hash_table(raw_dict):
                 keys.append(file_name + "_" + str(episode_id) + "_" + i)
                 reasoning_dict = raw_dict[file_name][episode_id]["reasoning"][i]
 
+                control_freq = 20
                 gripper_lookahead_n = 5  # list this many future positions of the gripper
+                jump_n = int(control_freq / gripper_lookahead_n)
                 trajectory_features = raw_dict[file_name][episode_id]["features"]
 
                 reasoning_dict["gripper"] = ""
@@ -107,9 +112,10 @@ def make_tf_hash_table(raw_dict):
                     if trajectory_features["gripper_position"] is not None:
                         if 0 <= int(i) < len(trajectory_features["gripper_position"]):
                             future_positions = []
+                            
                             for j in range(gripper_lookahead_n):
-                                if int(i) + j < len(trajectory_features["gripper_position"]):
-                                    future_positions += trajectory_features["gripper_position"][int(i) + j]
+                                if int(i) + j * jump_n < len(trajectory_features["gripper_position"]):
+                                    future_positions += trajectory_features["gripper_position"][int(i) + j * jump_n]
                                 else:
                                     future_positions += future_positions[-2:]
 

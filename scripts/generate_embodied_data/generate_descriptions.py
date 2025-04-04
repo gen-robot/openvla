@@ -53,7 +53,7 @@ vlm = load(vlm_model_id, hf_token=hf_token)
 vlm = vlm.to(device, dtype=torch.bfloat16)
 
 if args.results_path is None:
-    args.results_path = f"./outputs/{args.dataset_name}"
+    args.results_path = f"./outputs/{args.dataset_name}/descriptions"
 if not os.path.exists(args.results_path):
     os.makedirs(args.results_path)
 results_json_path = os.path.join(args.results_path, f"results_{args.id}.json")

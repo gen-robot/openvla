@@ -1,4 +1,4 @@
-task_name="bridge_orig"
+task_name="libero_object_no_noops"
 use_film=False                      # if True, it will inject the language instruction into the visual encoder via FiLM
 use_proprio=False                   # if True, it will use the proprioceptive sensor data, which would be useful for L1 regression or diffusion head
 num_images_in_input=1               # the number of images in the input. if you want to use wrist images, set it to 3 or whatever you want.
@@ -10,9 +10,9 @@ num_images_in_input=1               # the number of images in the input. if you 
 use_l1_regression=False             # if True, it will use the L1 regression head
 use_diffusion=False                 # if True, it will use the diffusion head
 merge_lora_during_training=False    # if True, it will merge the LoRA weights during training, which will slightly increase the GPU memory usage
-num_actions_chunk=5                 # the number of actions to be predicted
+num_actions_chunk=1                 # the number of actions to be predicted
 use_parallel_decoding=False         # if you use a large chunk_size, make sure you have enabled parallel decoding in the model to increase the throughput
-is_debug=True
+is_debug=False
 enable_cot=True
 use_lora=True
 
@@ -21,7 +21,7 @@ if [ ${is_debug} = True ]; then
     num_gpus=1
     project_name="OpenVLA-debug"
 elif [ ${enable_cot} = True ]; then
-    num_gpus=7 # all available GPUs
+    num_gpus=8 # all available GPUs
     project_name="VLA-Reasoning"
 else
     num_gpus=4 # all available GPUs
@@ -29,8 +29,8 @@ else
 fi
 
 torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
-  --vla_path "openvla/openvla-7b" \
-  --data_root_dir datasets \
+  --vla_path "openvla/openvla-7b-finetuned-libero-object" \
+  --data_root_dir datasets/libero_data \
   --dataset_name ${task_name} \
   --run_root_dir checkpoints/${task_name} \
   --use_proprio ${use_proprio} \
