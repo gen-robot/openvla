@@ -82,6 +82,7 @@ class FinetuneConfig:
     dataset_name: str = "droid_wipe"                                # Name of fine-tuning dataset (e.g., `droid_wipe`)
     run_root_dir: Path = Path("runs")                               # Path to directory to store logs & checkpoints
     # adapter_tmp_dir: Path = Path("adapter-tmp")                     # Temporary directory for LoRA weights before fusing
+    version: str = None
 
     # Fine-tuning Parameters
     batch_size: int = 16                                            # Fine-tuning batch size
@@ -202,20 +203,30 @@ def finetune(cfg: FinetuneConfig) -> None:
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
         train=True,
+        version = cfg.version,
     )
 
-    dataset_version = Path(vla_dataset.dataset_statistics[cfg.dataset_name]["data_dir"]).name
+    if cfg.version==None:
+        dataset_version = Path(vla_dataset.dataset_statistics[cfg.dataset_name]["data_dir"]).name
+    else:
+        dataset_version = Path(vla_dataset.dataset_statistics[cfg.dataset_name+":"+cfg.version]["data_dir"]).name
 
     # Configure Unique Experiment ID & Log Directory
     exp_id = f"steps_{cfg.max_steps}"
 
     # Start =>> Build Directories
-    counter = 0
-    run_dir = cfg.run_root_dir / dataset_version / f"{exp_id}_bs_{cfg.batch_size}-{counter}"
-    while run_dir.exists():
-        counter += 1
-        run_dir = cfg.run_root_dir / dataset_version / f"{exp_id}-bs_{cfg.batch_size}-{counter}"
+    # if distributed_state.is_main_process:
+    #     counter = 0
+    #     run_dir = cfg.run_root_dir / dataset_version / f"{exp_id}_bs_{cfg.batch_size}-{counter}"
+    #     while run_dir.exists():
+    #         counter += 1
+    #         run_dir = cfg.run_root_dir / dataset_version / f"{exp_id}-bs_{cfg.batch_size}-{counter}"
+    #     os.makedirs(run_dir, exist_ok=True)
 
+    # dist.barrier()
+    # run_dir = cfg.run_root_dir / dataset_version / f"{exp_id}-bs_{cfg.batch_size}-{counter}"
+
+    run_dir = cfg.run_root_dir / dataset_version / f"{exp_id}_bs_{cfg.batch_size}"
     os.makedirs(run_dir, exist_ok=True)
 
     # [Important] Save Dataset Statistics =>> used to de-normalize actions for inference!
@@ -255,7 +266,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Initialize Logging =>> W&B
     if distributed_state.is_main_process:
-        name = f"{cfg.dataset_name}-v{dataset_version}-{exp_id}-bs_{cfg.batch_size}-{counter}"
+        name = f"{cfg.dataset_name}-v{dataset_version}-{exp_id}-bs_{cfg.batch_size}"
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=name)
 
     # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
