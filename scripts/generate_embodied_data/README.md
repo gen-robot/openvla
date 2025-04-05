@@ -1,4 +1,30 @@
-1. Run `scripts/generate_embodied_data/bounding_boxes/generate_descriptions.py` to generate a file containing captions for all trajectories.
-2. Run `scripts/generate_embodied_data/full_reasonings.py` to generate full reasonings. I've updated the script so that now it calls the right functions when executed.
-3. Run `scripts/generate_embodied_data/bounding_boxes/generate_bboxes.py` to compute bounding boxes using the captions.
-4. Merge the resulting dictionaries of features.
+`dataset_name` is the name of the dataset to generate the embodied data for.
+`data_dir` is the directory to save the generated data.
+
+```bash
+./generate_cot.sh <dataset_name> <data_dir> <mode>
+```
+
+`mode` is one of the following:
+- `reasoning`: generate full reasonings
+- `gripper`: generate gripper positions
+- `bboxes`: generate bounding boxes
+- `descriptions`: generate descriptions
+
+```bash
+# this process needs to be run with GPU
+./generate_cot.sh $dataset_name $data_dir descriptions
+python merge_descriptions.py --results_path ./outputs/$dataset_name/descriptions
+
+# this process needs to be run with GPU
+./generate_cot.sh $dataset_name $data_dir bboxes
+
+# this process needs to be run with network proxy
+./generate_cot.sh $dataset_name $data_dir reasoning
+
+# this process needs to be run with network proxy
+./generate_cot.sh $dataset_name $data_dir gripper
+
+# merge the generated data
+python merge_all_json.py --results_path ./outputs/$dataset_name
+```

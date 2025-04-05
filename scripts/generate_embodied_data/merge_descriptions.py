@@ -1,10 +1,15 @@
 import json
 import os
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--results_path", type=str, required=True)
+args = parser.parse_args()
 
 full_json = {}
 count = 0
 
-path_to_desc = "./descriptions"
+path_to_desc = os.path.join(args.results_path, "descriptions")
 path_to_full_desc = os.path.join(path_to_desc, "full_descriptions.json")
 
 for json_f in os.listdir(path_to_desc):
@@ -25,4 +30,4 @@ print("Inserted", count, "trajectory descriptions into combined json")
 print("Saving to:", path_to_full_desc)
 
 with open(path_to_full_desc, "w") as f:
-    json.dump(full_json, path_to_full_desc)
+    json.dump(full_json, f)

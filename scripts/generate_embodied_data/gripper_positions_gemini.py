@@ -378,7 +378,7 @@ if __name__ == "__main__":
     episode_indexes = list(range(start_episode_id, end_episode_id))
 
     # Create output directories
-    output_dir = f"./outputs/{args.dataset_name}/gripper_positions_gemini" 
+    output_dir = f"./outputs/{args.dataset_name}/gripper_positions" 
     video_dir = f"{output_dir}/videos/{args.id}"
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(video_dir, exist_ok=True)
