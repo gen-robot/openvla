@@ -1,6 +1,6 @@
 import numpy as np
 def filter_small_actions(actions, states=None, 
-                            pos_thresh=1e-4, 
+                            pos_thresh=1e-3, 
                             rot_thresh=1e-3, 
                             check_gripper=True):
     """

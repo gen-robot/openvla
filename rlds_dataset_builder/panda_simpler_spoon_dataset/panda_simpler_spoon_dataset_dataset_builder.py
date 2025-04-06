@@ -12,16 +12,16 @@ from third_party.openvla.rlds_dataset_builder.utils import filter_small_actions
 class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for example dataset."""
 
-    VERSION = tfds.core.Version('3.1.0')
+    VERSION = tfds.core.Version('1.1.0')
     RELEASE_NOTES = {
-        '3.1.0': """panda simpler spoon with 500 traj, delete minor actions. """,
+        '1.1.0': """panda simpler spoon with 125 traj, with filter, 0,9 ratio. """,
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.path = SIMPLER_ROOT_DIR+"/videos/"
         self.tasks = [
-            "scp/PandaPutSpoonOnTableClothInRandomScene-v1/20250402_235953/data",
+            "scp/sft_125/panda/spoon/data",
         ]
         assert len(self.tasks)==1, "task_num is false."
 
@@ -52,13 +52,14 @@ class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         # Use _generate_examples to generate train and eval splits
-        train, eval = self._generate_examples(split_ratio=0.9, apply_action_filter=False)
+        split_ratio = 0.9
+        apply_action_filter = True
         return {
-            'train': train,
-            'val': eval,
+            'train': self._generate_examples(split_ratio=split_ratio, is_train=True, apply_action_filter=apply_action_filter),
+            'val': self._generate_examples(split_ratio=split_ratio, is_train=False, apply_action_filter=apply_action_filter),
         }
 
-    def _generate_examples(self, split_ratio=0.9, apply_action_filter=True) -> Iterator[Tuple[str, Any]]:
+    def _generate_examples(self, split_ratio=0.9, is_train=True, apply_action_filter=True) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
 
         def _parse_example(episode_path, apply_action_filter=True):
@@ -70,9 +71,10 @@ class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
 
             if apply_action_filter:
                 # === Filter small actions and get valid indices ===
-                filtered_actions, valid_mask = filter_small_actions(actions)
+                filtered_actions, valid_mask = filter_small_actions(actions, pos_thresh=0.0015, rot_thresh=0.0015, check_gripper=True)
                 # === Filter images using the same mask ===
                 filtered_images = [images[i] for i in range(len(images)) if valid_mask[i]]
+                print(f"remove minor action numbers: {len(actions)-len(filtered_actions)}")
             else:
                 filtered_actions = actions
                 filtered_images = images
@@ -83,7 +85,6 @@ class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
                     image = np.array(cv2.imdecode(np.frombuffer(filtered_images[i], np.uint8), cv2.IMREAD_COLOR))
                 else:
                     image = np.asarray(filtered_images[i])
-
                 episode.append({
                     'observation': {
                         'image': image,
@@ -106,7 +107,6 @@ class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
         for task in self.tasks:
             path = Path(self.path) / task
             files = sorted(glob.glob(str(path / "*.npy")))
-            random.shuffle(files) # TODO whether to shuffle here or in the dataset
             all_files.extend(files)
 
         # Calculate the split index based on the ratio
@@ -114,15 +114,16 @@ class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
         train_files = all_files[:split_idx]
         eval_files = all_files[split_idx:]
 
-        # Yield examples for training split
-        for ep_path in train_files:
-            sample = _parse_example(ep_path, apply_action_filter)
-            yield ep_path, sample
-
-        # Yield examples for validation split
-        for ep_path in eval_files:
-            sample = _parse_example(ep_path, apply_action_filter)
-            yield ep_path, sample
+        if is_train:
+            # Yield examples for training split
+            for ep_path in train_files:
+                sample = _parse_example(ep_path, apply_action_filter)
+                yield ep_path, sample
+        else:
+            # Yield examples for validation split
+            for ep_path in eval_files:
+                sample = _parse_example(ep_path, apply_action_filter)
+                yield ep_path, sample
 
         # # create list of all examples
         # episode_paths = glob.glob(path)
