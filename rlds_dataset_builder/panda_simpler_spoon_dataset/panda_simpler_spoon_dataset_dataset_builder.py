@@ -14,7 +14,7 @@ class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
 
     VERSION = tfds.core.Version('1.1.0')
     RELEASE_NOTES = {
-        '1.1.0': """panda simpler spoon with 125 traj, with filter, 0,9 ratio. """,
+        '1.1.0': """panda simpler spoon with 125 traj, with filter, 0,9 ratio. thresh 0.002, 0.0015 """,
     }
 
     def __init__(self, *args, **kwargs):
@@ -71,7 +71,7 @@ class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
 
             if apply_action_filter:
                 # === Filter small actions and get valid indices ===
-                filtered_actions, valid_mask = filter_small_actions(actions, pos_thresh=0.0015, rot_thresh=0.0015, check_gripper=True)
+                filtered_actions, valid_mask = filter_small_actions(actions, pos_thresh=0.002, rot_thresh=0.0015, check_gripper=True)
                 # === Filter images using the same mask ===
                 filtered_images = [images[i] for i in range(len(images)) if valid_mask[i]]
                 print(f"remove minor action numbers: {len(actions)-len(filtered_actions)}")

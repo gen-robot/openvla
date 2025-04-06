@@ -13,10 +13,12 @@ def filter_small_actions(actions, states=None,
         the next 3 are delta Euler angles (in radians), and the last is the gripper state (-1 or 1).
     states : ndarray of shape (N, ...) or None
         Optional array of corresponding states (e.g., images, joint states). Will be filtered in sync with actions.
-    pos_thresh : float
+    pos_thresh : float or None
         Minimum Euclidean norm threshold for delta position to be considered a valid action.
-    rot_thresh : float
+        If None, position filtering is skipped.
+    rot_thresh : float or None
         Minimum Euclidean norm threshold for delta rotation to be considered a valid action.
+        If None, rotation filtering is skipped.
     check_gripper : bool
         If True, ensures that any frame where the gripper state changes (e.g., from -1 to 1) is preserved.
 
@@ -40,7 +42,14 @@ def filter_small_actions(actions, states=None,
         pos_movement = np.linalg.norm(delta_xyz)
         rot_movement = np.linalg.norm(delta_euler)
 
-        is_valid = (pos_movement > pos_thresh) or (rot_movement > rot_thresh)
+        if pos_thresh is None and rot_thresh is None:
+            is_valid = True
+        elif pos_thresh is None:
+            is_valid = (rot_movement > rot_thresh)
+        elif rot_thresh is None:
+            is_valid = (pos_movement > pos_thresh)
+        else:
+            is_valid = (pos_movement > pos_thresh) or (rot_movement > rot_thresh)
 
         # Preserve gripper toggle events (e.g., from -1 to 1 or vice versa)
         if check_gripper and i > 0:
