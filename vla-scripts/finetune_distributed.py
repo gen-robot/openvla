@@ -20,6 +20,7 @@ Run with:
 """
 
 import os
+import re
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +31,7 @@ import torch
 import torch.distributed as dist
 import tqdm
 from accelerate import PartialState
-from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, PeftModel, PeftConfig, get_peft_model, prepare_model_for_kbit_training
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
@@ -102,6 +103,7 @@ class FinetuneConfig:
     lora_dropout: float = 0.0                                       # Dropout applied to LoRA weights
     use_quantization: bool = False                                  # Whether to 4-bit quantize VLA for LoRA fine-tuning
                                                                     #   => CAUTION: Reduces memory but hurts performance
+    lora_path: Optional[str] = None                                 # Path to LoRA weights (on HuggingFace Hub)
 
     # Tracking Parameters
     wandb_project: str = "openvla"                                  # Name of W&B project to log to (use default!)
@@ -154,14 +156,23 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # [LoRA] Wrap Model w/ PEFT `LoraConfig` =>> by default we set `target_modules=all-linear`
     if cfg.use_lora:
-        lora_config = LoraConfig(
-            r=cfg.lora_rank,
-            lora_alpha=min(cfg.lora_rank, 16),
-            lora_dropout=cfg.lora_dropout,
-            target_modules="all-linear",
-            init_lora_weights="gaussian",
-        )
-        vla = get_peft_model(vla, lora_config)
+        if cfg.lora_path is not None and cfg.lora_path != "None" and cfg.lora_path != "":
+            vla = PeftModel.from_pretrained(vla, cfg.lora_path, is_trainable=True)
+            match = re.search(r"(\d+)$", os.path.basename(cfg.lora_path))
+            if match:
+                start_step = int(match.group(1))
+            else:
+                raise ValueError("Invalid LoRA path format. Unable to extract step number.")
+        else:
+            start_step = 0
+            lora_config = LoraConfig(
+                r=cfg.lora_rank,
+                lora_alpha=min(cfg.lora_rank, 16),
+                lora_dropout=cfg.lora_dropout,
+                target_modules="all-linear",
+                init_lora_weights="gaussian",
+            )
+            vla = get_peft_model(vla, lora_config)
         vla.print_trainable_parameters()
 
     # Wrap VLA in PyTorch DDP Wrapper for Multi-GPU Training
@@ -170,6 +181,13 @@ def finetune(cfg: FinetuneConfig) -> None:
     # Create Optimizer =>> note that we default to a simple constant learning rate!
     trainable_params = [param for param in vla.parameters() if param.requires_grad]
     optimizer = AdamW(trainable_params, lr=cfg.learning_rate)
+
+    if cfg.lora_path is not None and cfg.lora_path != "None" and cfg.lora_path != "":
+        optimizer_path = os.path.join(cfg.lora_path, "optimizer.pt")
+        if os.path.exists(optimizer_path):
+            optimizer.load_state_dict(torch.load(optimizer_path, map_location=device_id))
+        else:
+            raise ValueError(f"[Warning] Optimizer state not found at {optimizer_path}. Will start from scratch.")
 
     # Create Action Tokenizer
     action_tokenizer = ActionTokenizer(processor.tokenizer)
@@ -203,13 +221,13 @@ def finetune(cfg: FinetuneConfig) -> None:
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
         train=True,
-        version = cfg.version,
+        version=cfg.version,
     )
 
-    if cfg.version==None:
+    if cfg.version == None:
         dataset_version = Path(vla_dataset.dataset_statistics[cfg.dataset_name]["data_dir"]).name
     else:
-        dataset_version = Path(vla_dataset.dataset_statistics[cfg.dataset_name+":"+cfg.version]["data_dir"]).name
+        dataset_version = Path(vla_dataset.dataset_statistics[cfg.dataset_name + ":" + cfg.version]["data_dir"]).name
 
     # Configure Unique Experiment ID & Log Directory
     exp_id = f"steps_{cfg.max_steps}"
@@ -245,7 +263,6 @@ def finetune(cfg: FinetuneConfig) -> None:
         num_workers=0,  # Important =>> Set to 0 if using RLDS; TFDS rolls its own parallelism!
     )
 
-
     # eval
     vla_dataset_eval = RLDSDataset(
         cfg.data_root_dir,
@@ -255,6 +272,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
         train=False,
+        version=cfg.version,
     )
     dataloader_eval = DataLoader(
         vla_dataset_eval,
@@ -267,7 +285,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     # Initialize Logging =>> W&B
     if distributed_state.is_main_process:
         name = f"{cfg.dataset_name}-v{dataset_version}-{exp_id}-bs_{cfg.batch_size}"
-        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=name)
+        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=name) # resume="auto"
 
     # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
     recent_losses = deque(maxlen=cfg.grad_accumulation_steps)
@@ -275,7 +293,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     recent_l1_losses = deque(maxlen=cfg.grad_accumulation_steps)
 
     # Train!
-    with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
+    with tqdm.tqdm(total=cfg.max_steps, initial=start_step, leave=False) as progress:
         vla.train()
         optimizer.zero_grad()
         for batch_idx, batch in enumerate(dataloader):
@@ -319,7 +337,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             recent_l1_losses.append(action_l1_loss.item())
 
             # Compute gradient step index
-            gradient_step_idx = batch_idx // cfg.grad_accumulation_steps
+            gradient_step_idx = start_step + (batch_idx // cfg.grad_accumulation_steps)
 
             # Compute smoothened train metrics
             #   =>> Equal to current step metrics when not using gradient accumulation
@@ -410,6 +428,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                     # Save Processor & Weights
                     processor.save_pretrained(run_dir)
                     vla.module.save_pretrained(lora_save_dir)
+                    torch.save(optimizer.state_dict(), lora_save_dir / "optimizer.pt")
 
                 # Wait for processor and adapter weights to be saved by main process
                 dist.barrier()
