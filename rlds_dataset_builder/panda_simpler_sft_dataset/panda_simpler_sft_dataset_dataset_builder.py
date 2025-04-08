@@ -1,33 +1,31 @@
 from typing import Iterator, Tuple, Any
 from pathlib import Path
-
+import cv2
 import glob
 import numpy as np
 import tensorflow_datasets as tfds
 from simpler_env import SIMPLER_ROOT_DIR
+from third_party.openvla.rlds_dataset_builder.utils import filter_small_actions
 
 
 class PandaSimplerSftDataset(tfds.core.GeneratorBasedBuilder): # PandaSimplerSftDataset
     """DatasetBuilder for example dataset."""
 
-    VERSION = tfds.core.Version('7.0.0')
+    VERSION = tfds.core.Version('1.1.0')
     RELEASE_NOTES = {
-        '7.0.0': """totally contains 1200 trajectories of carrot and spoon and cube 
-                    -> scp/PandaPutCarrotOnPlateInScene-v1/20250315_155225/data + 
-                    -> scp/PandaPutSpoonOnTableClothInScene-v1/20250315_164241/data +
-                    -> scp/PandaStackGreenCubeOnYellowCubeBakedTexInScene-v1/20250315_141915/data """,
+        '1.1.0': "4 tasks 125x4 traj in random simpler env, with filter, 0,9 ratio. thresh 0.002, 0.0015 ",
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.path = SIMPLER_ROOT_DIR+"/videos/"
         self.tasks = [
-            "scp/PandaPutCarrotOnPlateInScene-v1/20250315_155225/data",  # 
-            "scp/PandaPutSpoonOnTableClothInScene-v1/20250315_164241/data", # 20250312_213531
-            "scp/PandaStackGreenCubeOnYellowCubeBakedTexInScene-v1/20250315_141915/data", # 20250312_214605
-            # "PandaPutEggplantInBasketScene-v1",
+            "scp/sft_125/panda/carrot/data",
+            "scp/sft_125/panda/cube/data",
+            "scp/sft_125/panda/eggplant/data",
+            "scp/sft_125/panda/spoon/data",
         ]
-        assert len(self.tasks)==3, "task_num is false."
+        assert len(self.tasks)==4, "task_num is false."
 
     def _info(self) -> tfds.core.DatasetInfo:
         """Dataset metadata (homepage, citation,...)."""
@@ -55,38 +53,48 @@ class PandaSimplerSftDataset(tfds.core.GeneratorBasedBuilder): # PandaSimplerSft
     # actually, we have the number of tasks times the number of episodes examples in _split generators
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
+        # Use _generate_examples to generate train and eval splits
+        split_ratio = 0.9
+        apply_action_filter = True
         return {
-            'train': self._generate_examples(360, spare=40),
-            'val': self._generate_examples(40, start=360),
+            'train': self._generate_examples(split_ratio=split_ratio, is_train=True, apply_action_filter=apply_action_filter),
+            'val': self._generate_examples(split_ratio=split_ratio, is_train=False, apply_action_filter=apply_action_filter),
         }
 
-    def _generate_examples(self, num_ep, spare=0, start=0) -> Iterator[Tuple[str, Any]]:
+    def _generate_examples(self, split_ratio=0.9, is_train=True, apply_action_filter=True) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
 
-        def _parse_example(episode_path):
+        def _parse_example(episode_path, apply_action_filter=True):
             data = np.load(episode_path, allow_pickle=True).tolist()
 
-            episode = []
-            success_count = 0
-            for i in range(len(data["action"])):
+            actions = np.array(data["action"])
+            images = data["image"]
+            is_image_encode = data.get("is_image_encode", False)
 
+            if apply_action_filter:
+                # === Filter small actions and get valid indices ===
+                filtered_actions, valid_mask = filter_small_actions(actions, pos_thresh=0.002, rot_thresh=0.0015, check_gripper=True)
+                # === Filter images using the same mask ===
+                filtered_images = [images[i] for i in range(len(images)) if valid_mask[i]]
+                print(f"remove minor action numbers: {len(actions)-len(filtered_actions)}")
+            else:
+                filtered_actions = actions
+                filtered_images = images
+
+            episode = []
+            for i in range(len(filtered_actions)):
+                if is_image_encode:
+                    image = np.array(cv2.imdecode(np.frombuffer(filtered_images[i], np.uint8), cv2.IMREAD_COLOR))
+                else:
+                    image = np.asarray(filtered_images[i])
                 episode.append({
                     'observation': {
-                        'image': np.asarray(data["image"][i]),
+                        'image': image,
                     },
-                    'action': data["action"][i],
+                    'action': filtered_actions[i].astype(np.float32),
                     'language_instruction': data['instruction'][0],
                 })
 
-                if data["info"][i]["success"][0]: # fix the bug by bingwen
-                    success_count += 1
-                else:
-                    success_count = 0
-
-                if success_count >= 6:
-                    break
-
-            # create output data sample
             sample = {
                 'steps': episode,
                 'episode_metadata': {
@@ -96,25 +104,28 @@ class PandaSimplerSftDataset(tfds.core.GeneratorBasedBuilder): # PandaSimplerSft
 
             return sample
 
+       # Read all files
         all_files = []
-        for task in self.tasks: # for every task
+        for task in self.tasks:
             path = Path(self.path) / task
             files = sorted(glob.glob(str(path / "*.npy")))
-            if spare > 0:
-                files = files[:-spare]
-            if start + num_ep > len(files):
-                start = len(files) - num_ep
-
-            files = files[start:start + num_ep]
-
-            print(f"{task}: {len(files)}")
-
             all_files.extend(files)
 
-        for idx, ep_path in enumerate(all_files):
-            sample = _parse_example(ep_path)
-            yield ep_path, sample
+        # Calculate the split index based on the ratio
+        split_idx = int(len(all_files) * split_ratio)  # Example: 0.9 for training and 0.1 for validation
+        train_files = all_files[:split_idx]
+        eval_files = all_files[split_idx:]
 
+        if is_train:
+            # Yield examples for training split
+            for ep_path in train_files:
+                sample = _parse_example(ep_path, apply_action_filter)
+                yield ep_path, sample
+        else:
+            # Yield examples for validation split
+            for ep_path in eval_files:
+                sample = _parse_example(ep_path, apply_action_filter)
+                yield ep_path, sample
 
         # # create list of all examples
         # episode_paths = glob.glob(path)
@@ -130,5 +141,3 @@ class PandaSimplerSftDataset(tfds.core.GeneratorBasedBuilder): # PandaSimplerSft
         #         | beam.Map(_parse_example)
         # )
 
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_sft_dataset_100
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_sft_dataset_268

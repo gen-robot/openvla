@@ -12,16 +12,16 @@ from third_party.openvla.rlds_dataset_builder.utils import filter_small_actions
 class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for example dataset."""
 
-    VERSION = tfds.core.Version('1.1.0')
+    VERSION = tfds.core.Version('4.1.0')
     RELEASE_NOTES = {
-        '1.1.0': """panda simpler spoon with 125 traj, with filter, 0,9 ratio. thresh 0.002, 0.0015 """,
+        '4.1.0': """panda simpler spoon with 2000 traj, with filter, 0,9 ratio. thresh 0.002, 0.0015 """,
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.path = SIMPLER_ROOT_DIR+"/videos/"
         self.tasks = [
-            "scp/sft_125/panda/spoon/data",
+            "scp/sft_2000/panda/spoon/data",
         ]
         assert len(self.tasks)==1, "task_num is false."
 
@@ -102,7 +102,7 @@ class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
 
             return sample
 
-        # Read all files, and shuffle them
+        # Read all files
         all_files = []
         for task in self.tasks:
             path = Path(self.path) / task
