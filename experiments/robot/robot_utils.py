@@ -106,6 +106,8 @@ def get_action(
     proprio_projector: Optional[torch.nn.Module] = None,
     noisy_action_projector: Optional[torch.nn.Module] = None,
     use_film: bool = False,
+    enable_cot: bool = False,
+    gemini_cot_annotator: Optional[Any] = None,
 ) -> Union[List[np.ndarray], np.ndarray]:
     """
     Query the model to get action predictions.
@@ -120,7 +122,8 @@ def get_action(
         proprio_projector: Optional proprioception projector
         noisy_action_projector: Optional noisy action projector for diffusion
         use_film: Whether to use FiLM
-
+        enable_cot: Whether to use CoT
+        gemini_cot_annotator: Optional Gemini CoT annotator
     Returns:
         Union[List[np.ndarray], np.ndarray]: Predicted actions
 
@@ -129,7 +132,7 @@ def get_action(
     """
     with torch.no_grad():
         if cfg.model_family == "openvla":
-            action, _ = get_vla_action(
+            action, generated_ids = get_vla_action(
                 cfg=cfg,
                 vla=model,
                 processor=processor,
@@ -139,11 +142,13 @@ def get_action(
                 proprio_projector=proprio_projector,
                 noisy_action_projector=noisy_action_projector,
                 use_film=use_film,
+                enable_cot=enable_cot,
+                gemini_cot_annotator=gemini_cot_annotator,
             )
         else:
             raise ValueError(f"Unsupported model family: {cfg.model_family}")
 
-    return action
+    return action, generated_ids
 
 
 def normalize_gripper_action(action: np.ndarray, binarize: bool = True) -> np.ndarray:

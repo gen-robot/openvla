@@ -52,7 +52,8 @@ def name_to_random_color(name):
     return [(hash(name) // (256**i)) % 256 for i in range(3)]
 
 def resize_pos(pos, img_size):
-    return [(x * size) // 256 for x, size in zip(pos, img_size)]
+    # return [(x * size) // 256 for x, size in zip(pos, img_size)]
+    return pos
 
 def draw_2d_points(img, pos_list, img_size):
     for i, pos in enumerate(reversed(pos_list)):

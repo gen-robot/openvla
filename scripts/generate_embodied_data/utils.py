@@ -52,7 +52,10 @@ class Gemini:
         print(f"n_retries: {i}")
 
         return None
-
+    
+    def query(self, prompt):
+        chat = self.safe_call(lambda: self.model.start_chat(history=[]))
+        return self.safe_call(lambda: chat.send_message(prompt).text)
 
 def post_process_caption(caption, lang_instruction):
     text = caption.replace(",", ".")

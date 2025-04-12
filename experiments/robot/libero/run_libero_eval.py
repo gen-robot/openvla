@@ -18,7 +18,7 @@ import draccus
 import numpy as np
 import tqdm
 from libero.libero import benchmark
-
+from scripts.generate_embodied_data.online_annotator import OnlineAnnotator
 import wandb
 
 # Append current directory so that interpreter can find experiments.robot
@@ -47,6 +47,7 @@ from experiments.robot.robot_utils import (
     normalize_gripper_action,
     set_seed_everywhere,
 )
+from prismatic.util.cot_utils import visualize_reasoning
 from prismatic.vla.constants import NUM_ACTIONS_CHUNK, ACTION_DIM
 
 
@@ -91,6 +92,8 @@ class GenerateConfig:
 
     window_size: Optional[int] = None                # If provided, uses a sliding window of this size to chunk the past observations and actions
     num_actions_chunk: Optional[int] = None          # If provided, uses a action chunk of this size to chunk the future actions
+    enable_cot: bool = False                         # If True, uses COT to generate actions
+    use_gemini_cot: bool = False                     # If True, uses Gemini to generate CoT, i.e., reasoning about the action
 
     use_parallel_decoding: bool = True               # If True, uses parallel decoding inside LLaMa model's sdpa attention, i.e., replacing causal mask with bidirectional mask
     use_l1_regression: bool = True                   # If True, uses continuous action head with L1 regression objective
@@ -291,6 +294,7 @@ def run_episode(
     noisy_action_projector=None,
     initial_state=None,
     log_file=None,
+    gemini_cot_annotator=None,
 ):
     """Run a single episode in the environment."""
     # Reset environment
@@ -312,6 +316,7 @@ def run_episode(
     # Setup
     t = 0
     replay_images = []
+    cot_images = []
     max_steps = TASK_MAX_STEPS[cfg.task_suite_name]
 
     # Run episode
@@ -328,21 +333,35 @@ def run_episode(
             observation, img = prepare_observation(obs, resize_size)
             replay_images.append(img)
 
+            # Query model to get action
+            actions, generated_ids = get_action(
+                cfg,
+                model,
+                observation,
+                task_description,
+                processor=processor,
+                action_head=action_head,
+                proprio_projector=proprio_projector,
+                noisy_action_projector=noisy_action_projector,
+                use_film=cfg.use_film,
+                enable_cot=cfg.enable_cot,
+                gemini_cot_annotator=gemini_cot_annotator,
+            )
             # If action queue is empty, requery model
             if len(action_queue) == 0:
-                # Query model to get action
-                actions = get_action(
-                    cfg,
-                    model,
-                    observation,
-                    task_description,
-                    processor=processor,
-                    action_head=action_head,
-                    proprio_projector=proprio_projector,
-                    noisy_action_projector=noisy_action_projector,
-                    use_film=cfg.use_film,
-                )
                 action_queue.extend(actions)
+
+            if cfg.enable_cot:
+                try:
+                    if gemini_cot_annotator is not None:
+                        generated_text = generated_ids
+                    else:
+                        generated_text = processor.batch_decode(generated_ids)[0]
+                    # print("Generated text: ", generated_text)
+                    vla_image = visualize_reasoning(observation["full_image"], task_description, generated_text)
+                    cot_images.append(vla_image)
+                except Exception as e:
+                    log_message(f"Error visualizing reasoning: {e}", log_file)
 
             # Get action from queue
             action = action_queue.popleft()
@@ -360,7 +379,7 @@ def run_episode(
     except Exception as e:
         log_message(f"Episode error: {e}", log_file)
 
-    return success, replay_images
+    return success, replay_images, cot_images
 
 
 def run_task(
@@ -376,6 +395,7 @@ def run_task(
     total_episodes=0,
     total_successes=0,
     log_file=None,
+    gemini_cot_annotator=None,
 ):
     """Run evaluation for a single task."""
     # Get task
@@ -412,7 +432,7 @@ def run_task(
         log_message(f"Starting episode {task_episodes + 1}...", log_file)
 
         # Run episode
-        success, replay_images = run_episode(
+        success, replay_images, cot_images = run_episode(
             cfg,
             env,
             task_description,
@@ -424,6 +444,7 @@ def run_task(
             noisy_action_projector,
             initial_state,
             log_file,
+            gemini_cot_annotator,
         )
 
         # Update counters
@@ -437,6 +458,10 @@ def run_task(
         save_rollout_video(
             replay_images, total_episodes, success=success, task_description=task_description, log_file=log_file, run_id=cfg.run_id
         )
+        if len(cot_images) > 0:
+            save_rollout_video(
+                cot_images, total_episodes, success=success, task_description=task_description, log_file=log_file, run_id=cfg.run_id, note="cot"
+            )
 
         # Log results
         log_message(f"Success: {success}", log_file)
@@ -478,6 +503,11 @@ def eval_libero(cfg: GenerateConfig) -> float:
     # Set random seed
     set_seed_everywhere(cfg.seed)
 
+    if cfg.enable_cot and cfg.use_gemini_cot:
+        gemini_cot_annotator = OnlineAnnotator(model_name="gemini-2.5-pro-preview-03-25")
+    else:
+        gemini_cot_annotator = None
+
     # Initialize model and components
     model, action_head, proprio_projector, noisy_action_projector, processor = initialize_model(cfg)
 
@@ -510,6 +540,7 @@ def eval_libero(cfg: GenerateConfig) -> float:
             total_episodes,
             total_successes,
             log_file,
+            gemini_cot_annotator,
         )
 
     # Calculate final success rate

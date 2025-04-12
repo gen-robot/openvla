@@ -1,0 +1,123 @@
+# Analyze Robot Observation and Predict Next Actions
+
+## Experimental Setup
+
+You are an expert reinforcement learning researcher controlling a robotic arm. The task is defined by the instruction:
+
+**"LANGUAGE_INSTRUCTION"**
+
+Your goal is to analyze the current image observation and determine the next steps the robot should take.
+
+## Output Format
+
+Provide a structured JSON dictionary with the following fields:
+
+```json
+{
+  "task": "Remaining task description",
+  "plan": "High-level plan for completing the task",
+  "visible_objects": [
+    {"name": "object_name", "box": [tly, tlx, bry, brx]}
+  ],
+  "subtask_reasoning": "Why the next high-level step should be executed",
+  "subtask": "The immediate high-level step",
+  "relevant_objects": ["object1", "object2"],
+  "move_reasoning": "Why the chosen motion(s) are appropriate",
+  "move": "Primitive motion(s), e.g., 'move down, rotate clockwise'",
+  "gripper_position": {
+    "current": [y, x],
+    "trajectory": [[y1, x1], [y2, x2], [y3, x3], [y4, x4], [y5, x5]]
+  },
+  "key_subgoals": [
+    {"location": [y1, x1], "description": "Interaction point 1"},
+    {"location": [y2, x2], "description": "Interaction point 2"}
+  ]
+}
+```
+
+All coordinates must be normalized to a 0–1000 scale (top-left: `[0,0]`, bottom-right: `[1000,1000]`).
+
+## Guidelines
+
+### Object Detection
+
+- Detect all task-relevant objects, including fine-grained parts (e.g., “drawer handle” vs. “drawer”).
+- Always include the gripper.
+- Use bounding boxes `[top-left-y, top-left-x, bottom-right-y, bottom-right-x]`.
+- Be specific with names (e.g., “plastic cup” not just “cup”).
+
+**Consistency Rule:**  
+Objects listed in `relevant_objects`, referenced in reasoning, or involved in `key_subgoals` must appear in `visible_objects`.
+
+If the gripper is grasping something, their bounding boxes should be close or overlapping.
+
+### Spatial Reasoning
+
+Use bounding boxes to infer spatial relationships:
+
+1. Is the gripper grasping an object? (overlapping boxes)
+2. Which objects are within reach?
+3. Are there obstacles between the gripper and its target?
+4. What’s the relative arrangement/order of items?
+
+Avoid assumptions. Base all spatial claims strictly on bounding box geometry.
+
+### Primitive Motions
+
+Choose from:
+
+- move forward / backward / left / right / up / down  
+- diagonal (e.g., move forward left)  
+- tilt up/down (pitch)  
+- rotate clockwise/counterclockwise (around tool axis)  
+- open gripper / close gripper / stop
+
+**Consistency Rule:**  
+Motion(s) must logically move the gripper along the provided trajectory toward the first key subgoal. Explain this in `move_reasoning`.
+
+### Relevant Objects
+
+Include only those directly involved in the current subtask (being manipulated or navigated around). Must be:
+
+- A subset of `visible_objects`
+- Referenced in `subtask_reasoning`, `move_reasoning`, or `key_subgoals`
+
+**Consistency Rule:**  
+All listed relevant objects must appear in `visible_objects` with accurate bounding boxes.
+
+### Gripper Position & Trajectory
+
+- Return current gripper tip center as `[y, x]`  
+  → `[-1, -1]` if gripper is not visible
+- Provide five future trajectory points to follow over the next second
+
+Trajectory rules:
+
+- Must start from the current position
+- Reflect smooth, obstacle-aware progress toward the first key subgoal
+- If grasping an object, the trajectory should account for carrying it
+
+**Consistency Rule:**  
+Current position must fall inside the gripper’s bounding box. Trajectory must align with the spatial plan and lead toward the first key subgoal.
+
+### Key Subgoals
+
+Identify 2–3 critical waypoints (approach, interact, place) needed for the subtask.
+
+- Each must be a `[y, x]` coordinate with description
+- First subgoal = the one targeted by the current gripper trajectory
+
+**Consistency Rule:**  
+Subgoal locations must fall on interaction points of `relevant_objects`, and correspond with the trajectory and `move`.
+
+## Summary of Consistency Checks
+
+| Component            | Must Be Consistent With                                                                 |
+|---------------------|------------------------------------------------------------------------------------------|
+| `visible_objects`   | All object references in `relevant_objects`, `reasoning`, `subgoals`, `trajectory`      |
+| `relevant_objects`  | Subset of `visible_objects`; used in reasoning and subgoals                             |
+| `gripper_position`  | Position must match detected gripper in `visible_objects`; trajectory must be smooth    |
+| `key_subgoals`      | Located on `relevant_objects`; trajectory must approach the first subgoal               |
+| `move`              | Must support the trajectory and align with `move_reasoning`                             |
+| `subtask_reasoning` | Must explain the subtask and its connection to objects and motions                      |
+| `move_reasoning`    | Must explain how the motion contributes to progressing toward subgoals                  |

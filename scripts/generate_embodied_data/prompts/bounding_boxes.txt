@@ -1,0 +1,31 @@
+Analyze the provided image.
+
+First, accurately detect all visible objects relevant to the scene (e.g., robot parts, furniture, kitchen items). For each detected object, provide its bounding box defined by the top-left (y1, x1) and bottom-right (y2, x2) coordinates, along with a descriptive label.
+
+Return the detected objects and their bounding boxes in the following JSON format:
+
+```json
+[
+  {"box": [tly1, tlx1, bry1, brx1], "label": "object_label_1"},
+  {"box": [tly2, tlx2, bry2, brx2], "label": "object_label_2"},
+  ...
+  {"box": [tlyN, tlxN, bryN, brxN], "label": "object_label_N"}
+]
+```
+
+Coordinates must be normalized within a 0-1000 scale:
+
+The top-left corner of the image corresponds to (0, 0).
+The bottom-right corner of the image corresponds to (1000, 1000).
+If no objects are detected (which is unlikely in this scenario), return an empty list [].
+
+Next, considering the task "TASK_DESCRIPTION", predict the next two critical subgoal locations for the gripper tip. These points should represent key stages in progressing towards completing the task. The first subgoal should typically be an approach point near the object to be grasped, and the second should be an approach point near the placement location.
+
+Provide exactly two subgoal points in sequential order using the specified normalized format, accompanied by reasoning explaining why each point is a logical subgoal for the task:
+
+[
+  {"point": [y1, x1], "label": "subgoal_1", "reasoning": "Reason explaining why this is the first key subgoal location (e.g., 'Approach point above wine bottle for grasping')"},
+  {"point": [y2, x2], "label": "subgoal_2", "reasoning": "Reason explaining why this is the second key subgoal location (e.g., 'Approach point above rack for placing')"}
+]
+
+Ensure the points logically represent key intermediate targets for the gripper to reach during the grasp-and-place action, and the reasoning clearly justifies each subgoal choice in the context of the overall task.

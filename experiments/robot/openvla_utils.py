@@ -724,7 +724,6 @@ def prepare_images_for_vla(images: List[np.ndarray], cfg: Any) -> List[Image.Ima
     for image in images:
         # Validate format
         check_image_format(image)
-
         # Resize if needed
         if image.shape != (OPENVLA_IMAGE_SIZE, OPENVLA_IMAGE_SIZE, 3):
             image = resize_image_for_policy(image, OPENVLA_IMAGE_SIZE)
@@ -752,6 +751,8 @@ def get_vla_action(
     noisy_action_projector: Optional[torch.nn.Module] = None,
     use_film: bool = False,
     do_sample: bool = False,
+    enable_cot: bool = False,
+    gemini_cot_annotator: Optional[Any] = None,
 ) -> List[np.ndarray]:
     """
     Generate action predictions with the VLA policy.
@@ -783,8 +784,22 @@ def get_vla_action(
         # Extract primary image and additional images
         primary_image = all_images.pop(0)
 
+        if task_label.endswith("."):
+            task_label = task_label[:-1]
+
         # Build VLA prompt
-        prompt = f"In: What action should the robot take to {task_label.lower()}?\nOut: TASK:"
+        prompt = f"In: What action should the robot take to {task_label.lower()}?\nOut:"
+        if enable_cot:
+            if gemini_cot_annotator is not None:
+                cot_prompt = gemini_cot_annotator.annotate(
+                    language_instruction=task_label, 
+                    image=primary_image,
+                    visualize=True,
+                    return_formatted_string=True
+                )
+                prompt += " " + cot_prompt + " ACTION: "
+            else:
+                prompt += " ACTION: "
 
         # Process primary image
         inputs = processor(prompt, primary_image).to(DEVICE, dtype=torch.bfloat16)
@@ -819,7 +834,10 @@ def get_vla_action(
             action_head=action_head,
         )
     # Extract subset of actions for open loop steps
-    return [action[i] for i in range(min(len(action), cfg.num_open_loop_steps))], generated_ids
+    if gemini_cot_annotator is not None:
+        return [action[i] for i in range(min(len(action), cfg.num_open_loop_steps))], cot_prompt
+    else:
+        return [action[i] for i in range(min(len(action), cfg.num_open_loop_steps))], generated_ids
 
 
 def get_action_from_server(

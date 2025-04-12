@@ -2,32 +2,35 @@
 Example reasoning: /nfs/kun2/users/homer/datasets/bridge_data_all/numpy_256/bridge_data_v2/deepthought_folding_table/stack_blocks/19/train/out.npy_43_0 TASK:@Move the wooden arch onto the table.@PLAN:@Reach for the wooden arch. Grasp the wooden arch. Move the wooden arch to the table. Drop the wooden arch onto the table.@VISIBLE OBJECTS:@wooden blocks [150, 4, 188, 100]@SUBTASK REASONING:@The wooden arch is the object that needs to be moved, so the first step is to reach for it.@SUBTASK:@Reach for the wooden arch.@MOVE REASONING:@The arm is already in a good position to reach for the wooden arch.@MOVE:@stop@GRIPPER POSITION:@[97, 45, 97, 45, 89, 52, 83, 58, 82, 57]
 
 Example reasoning: /nfs/kun2/users/homer/datasets/bridge_data_all/numpy_256/bridge_data_v2/deepthought_folding_table/stack_blocks/19/train/out.npy_43_0 
-TASK: Move the wooden arch onto the table.
-PLAN:
-  - Reach for the wooden arch.
-  - Grasp the wooden arch.
-  - Move the wooden arch to the table.
-  - Drop the wooden arch onto the table.
-VISIBLE OBJECTS: wooden blocks [150, 4, 188, 100]
-SUBTASK REASONING: The wooden arch is the object that needs to be moved, so the first step is to reach for it.
-SUBTASK: Reach for the wooden arch.
-MOVE REASONING: The arm is already in a good position to reach for the wooden arch.
-MOVE: stop
-GRIPPER POSITION: [97, 45, 97, 45, 89, 52, 83, 58, 82, 57]
+TASK: The task remaining is to pick up the chocolate pudding and place it in the basket. 
+PLAN: The plan is to move to the basket, and release the pudding. 
+VISIBLE OBJECTS: basket [20, 107, 75, 162], bottle [109, 137, 128, 181], bottle [107, 100, 120, 128], robot [13, 0, 88, 98], bottle [181, 128, 200, 171].
+SUBTASK REASONING: The object has to descend and rotate for correct placement. 
+SUBTASK: The current subtask is to move to the basket. 
+RELEVANT OBJECTS: [pudding, basket]. 
+MOVE REASONING: Movement down and clockwise ensures good positioning. 
+MOVE: move down, rotate clockwise. 
+GRIPPER POSITION: [52, 62, 46, 73, 45, 81, 45, 83, 44, 82].
 """
 import enum
 import os
 import textwrap
 from typing import Dict, List
 
+import prismatic
 import cv2
 import numpy as np
 import tensorflow as tf
 import torch
 from PIL import Image, ImageDraw, ImageFont
+from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
-from .img_utils import draw_2d_points, draw_bboxes
-
+try:
+    from .img_utils import draw_2d_points, draw_bboxes
+    from ..models import load
+except ImportError:
+    from prismatic.util.img_utils import draw_2d_points, draw_bboxes
+    from prismatic.models import load
 
 class CotTag(enum.Enum):
     TASK = "TASK:"
@@ -273,7 +276,6 @@ def get_metadata(reasoning: Dict[str, str]):
                 metadata["bboxes"][obj] = coords
             except Exception as e:
                 print(f"Error parsing bbox: {e}")
-                import pdb; pdb.set_trace()
 
     return metadata
 
@@ -325,3 +327,215 @@ def visualize_reasoning(image: np.ndarray, instruction: str, reasoning_text: str
     reasoning_img = np.concatenate([img_arr, text_arr], axis=1)
 
     return reasoning_img
+
+
+class RuntimeCoTGenerator:
+    def __init__(self, device: str):
+        # models for generating bboxes
+        print(f"Loading Prismatic VLM...")
+        hf_token = os.environ["HF_TOKEN"]
+        vlm_model_id = "prism-dinosiglip+7b"
+        self.local_vlm = load(vlm_model_id, hf_token=hf_token)
+        self.local_vlm = self.local_vlm.to(device, dtype=torch.bfloat16)
+
+        print(f"Loading gDINO...")
+        gdino_model_id = "IDEA-Research/grounding-dino-base"
+        self.gdino_processor = AutoProcessor.from_pretrained(gdino_model_id, size={"shortest_edge": 256, "longest_edge": 256})
+        self.gdino_model = AutoModelForZeroShotObjectDetection.from_pretrained(gdino_model_id).to(device)
+        self.gdino_model = self.gdino_model.to(device, dtype=torch.bfloat16)
+
+    # PART 1: Prismatic VLM + Grounding DINO for generating object bboxes
+    def create_vlm_prompt(self, instruction: str):
+        """Create a prompt for the vision-language model to detect objects"""
+        user_prompt = "List all the objects you can see in this image, especially including any objects mentioned in the language instruction. Format your response as a simple list of object names separated by periods (e.g., 'cup. table. robot gripper.'). Be specific and comprehensive, but avoid using commas or other punctuation."
+        instruction = instruction.strip()
+        if len(instruction) > 0 and instruction[-1] == ".":
+            instruction = instruction[:-1]
+        if len(instruction) > 0 and " " in instruction:
+            user_prompt = f"The robot task is: '{instruction}.' " + user_prompt
+        return user_prompt
+
+    def post_process_object_list(self, caption):
+        """
+        Process the VLM output to create a clean list of objects separated by periods.
+        This format works better for gDINO object detection.
+        """
+        # Remove any explanatory text or prefixes
+        if ":" in caption:
+            caption = caption.split(":", 1)[1]
+        
+        # Replace commas with periods
+        caption = caption.replace(",", ".")
+        
+        # Replace other list markers and clean up
+        caption = caption.replace("-", "").replace("•", "").replace("\n", " ")
+        
+        # Split by periods, clean each item, and rejoin
+        items = [item.strip() for item in caption.split(".") if item.strip()]
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_items = [item for item in items if not (item in seen or seen.add(item))]
+        
+        # Join with periods
+        result = ". ".join(unique_items)
+        
+        # Ensure it ends with a period
+        if not result.endswith("."):
+            result += "."
+            
+        return result
+
+    def generate_bboxes(self, image: np.ndarray, instruction: str):
+        """Generate bounding boxes for objects in the image using VLM and gDINO"""
+        BOX_THRESHOLD = 0.4
+        TEXT_THRESHOLD = 0.3
+
+        image_pil = Image.fromarray(image)
+        user_prompt = self.create_vlm_prompt(instruction)
+        prompt_builder = self.local_vlm.get_prompt_builder()
+        prompt_builder.add_turn(role="human", message=user_prompt)
+        prompt_text = prompt_builder.get_prompt()
+        
+        object_list = self.local_vlm.generate(
+            image_pil, prompt_text, do_sample=True, temperature=0.4, max_new_tokens=64, min_length=1)
+        # Post-process the object list for gDINO
+        object_list = self.post_process_object_list(object_list)
+
+        gdino_inputs = self.gdino_processor(
+            images=image_pil,
+            text=object_list,
+            return_tensors="pt",
+        ).to(self.gdino_model.device)
+        
+        with torch.no_grad():
+            outputs = self.gdino_model(**gdino_inputs)
+
+        results = self.gdino_processor.post_process_grounded_object_detection(
+            outputs, gdino_inputs.input_ids, 
+            box_threshold=BOX_THRESHOLD, 
+            text_threshold=TEXT_THRESHOLD, 
+            target_sizes=[image_pil.size[::-1]])[0]
+
+        logits, phrases, boxes = (
+            results["scores"].cpu().numpy(),
+            results["labels"],
+            results["boxes"].cpu().numpy(),
+        )
+
+        bboxes = []
+        for lg, p, b in zip(logits, phrases, boxes):
+            b = list(b.astype(int))
+            lg = float(lg)
+            bboxes.append((lg, p, b))
+
+        return bboxes
+
+    # PART 2: Gemini for generating reasoning
+    def create_gemini_prompt(self, instruction: str, bboxes: list, gripper_pos=None):
+        """Create a prompt for Gemini to generate reasoning based on current observation"""
+        # Format bounding boxes as expected in CoT format
+        bbox_str = ""
+        for _, name, box in bboxes:
+            bbox_str += f"{name} {box}, "
+        bbox_str = bbox_str.rstrip(", ")
+        
+        # We're adapting the existing format but for a single step rather than trajectory
+        prompt = f"""# Generate reasoning for robot action
+
+## Task Information
+The robot is given the following instruction: "{instruction}"
+
+## Scene Information
+The following objects have been detected in the current scene with their bounding boxes:
+{bbox_str}
+
+## Format Requirements
+Your response must strictly follow this exact format:
+
+TASK: {instruction}
+
+PLAN:
+  - Step 1: [First step to accomplish the task]
+  - Step 2: [Second step to accomplish the task]
+  - [Continue with additional steps as needed]
+
+VISIBLE OBJECTS: {bbox_str}
+
+SUBTASK REASONING: [Explain what the immediate next subtask should be and why]
+
+SUBTASK: [State the specific immediate subtask to execute]
+
+MOVE REASONING: [Explain what movement the robot should make next and why]
+
+MOVE: [Specify the exact movement command: "forward", "backward", "left", "right", "up", "down", "stop", "grasp", "release"]
+
+Your reasoning should be clear, concise, and directly actionable for the robot.
+"""
+        return prompt
+
+    def generate_reasoning(self, image: np.ndarray, instruction: str, gripper_position=None):
+        """Generate a complete reasoning for the current observation"""
+        # Step 1: Generate bounding boxes for objects in the image
+        bboxes = self.generate_bboxes(image, instruction)
+        
+        # Step 2: Create prompt for Gemini
+        prompt = self.create_gemini_prompt(instruction, bboxes, gripper_position)
+        
+        # Step 3: Call Gemini to generate reasoning
+        try:
+            import google.generativeai as genai
+            
+            # Configure the Gemini API with your API key
+            if "GOOGLE_API_KEY" in os.environ:
+                genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+            else:
+                raise ValueError("GOOGLE_API_KEY environment variable not set")
+            
+            # Set up the model
+            generation_config = {
+                "temperature": 0.2,
+                "top_p": 0.8,
+                "top_k": 40,
+                "max_output_tokens": 2048,
+            }
+            
+            # Use Gemini Pro model
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-pro",
+                generation_config=generation_config,
+            )
+            
+            # Get the response
+            response = model.generate_content(prompt)
+            reasoning_text = response.text
+            
+        except Exception as e:
+            print(f"Error calling Gemini API: {e}")
+            # Fallback reasoning if API call fails
+            reasoning_text = f"""TASK: {instruction}
+
+PLAN:
+  - Analyze the scene
+  - Identify relevant objects
+  - Execute appropriate action
+
+VISIBLE OBJECTS: {', '.join([f"{name} {box}" for _, name, box in bboxes])}
+
+SUBTASK REASONING: Unable to generate detailed reasoning due to API error.
+
+SUBTASK: Analyze the scene first.
+
+MOVE REASONING: Need more information to determine the next move.
+
+MOVE: stop"""
+        
+        # Step 4: Add gripper position information if available
+        if gripper_position is not None:
+            reasoning_text += f"\n\nGRIPPER POSITION: {gripper_position}"
+        else:
+            # Use placeholder values if no gripper position is provided
+            default_gripper = [97, 45, 97, 45, 89, 52, 83, 58, 82, 57]
+            reasoning_text += f"\n\nGRIPPER POSITION: {default_gripper}"
+        
+        return reasoning_text

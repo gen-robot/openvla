@@ -139,7 +139,9 @@ def make_dataset_from_rlds(
     if language_key is not None:
         REQUIRED_KEYS.add(language_key)
 
-    load_cot_labels = enable_cot #('bridge' in name) and enable_cot
+    load_cot_labels = enable_cot and (
+        ('bridge' in name) or ('libero' in name)
+    )
 
     if load_cot_labels:
         if reasoning_dataset_dir is None:
@@ -219,7 +221,7 @@ def make_dataset_from_rlds(
                 )
             task["language_instruction"] = traj.pop(language_key)
 
-        reasonings = tf.repeat("nonono", traj_len)
+        reasonings = tf.repeat("", traj_len)
         metadata_dict = dict()
         if 'episode_id' in traj["traj_metadata"].get("episode_metadata", {}).keys():
             file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
@@ -246,9 +248,10 @@ def make_dataset_from_rlds(
             "task": task,
             "action": tf.cast(traj["action"], tf.float32),
             "dataset_name": tf.repeat(name, traj_len),
-            "reasoning": reasonings,
             **metadata_dict,
         }
+        if enable_cot:
+            traj["reasoning"] = reasonings
 
         if absolute_action_mask is not None:
             if len(absolute_action_mask) != traj["action"].shape[-1]:

@@ -1,0 +1,33 @@
+Analyze the image capturing the current state of a robotic arm performing the manipulation task: "TASK_DESCRIPTION". Identify the most suitable next primitive motion from the list below. Motions are defined relative to the robotic arm's base, not the camera viewpoint or image orientation. You may choose multiple primitives simultaneously if they are not conflicting.
+
+### Primitive Motion Options:
+- **move forward**: Move horizontally away from the robot's base
+- **move backward**: Move horizontally towards the robot's base
+- **move left**: Move horizontally to the arm's left
+- **move right**: Move horizontally to the arm's right
+- **move up**: Move vertically upwards
+- **move down**: Move vertically downwards
+- **move forward left**: Move diagonally forward and left simultaneously
+- **move backward right up**: Move diagonally backward, right, and upward simultaneously
+- **tilt up**: Angle the gripper/tool upwards (changing pitch)
+- **tilt down**: Angle the gripper/tool downwards (changing pitch)
+- **rotate clockwise**: Twist the gripper/tool clockwise around its pointing direction axis
+- **rotate counterclockwise**: Twist the gripper/tool counterclockwise around its pointing direction axis
+- **open gripper**: Open the gripper's fingers or jaws
+- **close gripper**: Close the gripper's fingers or jaws, typically to grasp
+- **stop**: Make no movement, remain stationary
+
+You should follow these requirements:
+1. Examine the robotic arm's position, orientation, and status.
+2. Select one or more primitive motions that best suit the next immediate step.
+
+### Output Format
+Respond strictly with this JSON format:
+```json
+{
+  "next_primitive": "<chosen primitive>",
+  "reasoning": "<brief explanation of the chosen primitive>"
+}
+```
+
+Now, analyze and respond based on the image.

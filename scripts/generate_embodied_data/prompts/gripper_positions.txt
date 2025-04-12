@@ -1,0 +1,36 @@
+Analyze the provided image and accurately identify the center of the robotic gripper tip.
+
+Return the detected position in the following JSON format:
+
+```
+[{"point": [y, x], "label": "gripper_tip"}]
+```
+
+Coordinates should be normalized within a 0-1000 scale:
+
+- The top-left corner of the image corresponds to (0, 0).
+- The bottom-right corner of the image corresponds to (1000, 1000).
+
+If the gripper is not visible, return:
+
+```
+[{"point": [-1, -1], "label": "not_found"}]
+```
+
+Next, based on the detected gripper tip position, predict its trajectory over the next second for the task: "TASK_DESCRIPTION".
+Generate a sequence of five future positions the gripper tip is expected to follow, starting from the current position. Each point must be formatted using the same normalized coordinate system, and accompanied by a brief explanation describing the reasoning behind the motion at each step.
+Return the result in this JSON format:
+
+
+```
+[
+  {"point": [y1, x1], "label": "trajectory_point_1", "reasoning": "reason for moving to trajectory_point_1"},
+  {"point": [y2, x2], "label": "trajectory_point_2", "reasoning": "reason for moving to trajectory_point_2"},
+  {"point": [y3, x3], "label": "trajectory_point_3", "reasoning": "reason for moving to trajectory_point_3"},
+  {"point": [y4, x4], "label": "trajectory_point_4", "reasoning": "reason for moving to trajectory_point_4"},
+  {"point": [y5, x5], "label": "trajectory_point_5", "reasoning": "reason for moving to trajectory_point_5"}
+]
+```
+
+Each trajectory point should logically represent the gripper's path toward completing the pick-and-place action, and the provided reasoning should clearly justify each step of the predicted trajectory.
+

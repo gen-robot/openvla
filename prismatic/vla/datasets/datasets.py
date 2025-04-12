@@ -99,7 +99,12 @@ class RLDSBatchTransform:
         if lang.endswith("."):
             lang = lang[:-1]
 
-        if len(reasoning) > 0:
+        if 'reasoning' not in rlds_batch:
+            conversation = [
+                {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
+                {"from": "gpt", "value": f"{action_chunk_string}"},
+            ]
+        elif len(reasoning) > 0:
             conversation = [
                 {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
                 # {"from": "human", "value": f"What action should the robot take to {lang}?"},
@@ -215,6 +220,8 @@ class RLDSDataset(IterableDataset):
         for name, _ in mixture_spec:
             if "aloha" in name or "cobot" in name:
                 load_camera_views[name] = ("primary", "left_wrist", "right_wrist")
+            elif "libero" in name:
+                load_camera_views[name] = ("primary", "wrist")
             elif "bridge" in name:
                 load_camera_views[name] = ("primary",)
             else:
