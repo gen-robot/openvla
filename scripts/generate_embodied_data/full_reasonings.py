@@ -321,7 +321,7 @@ if __name__ == "__main__":
 
     result_dir = f"./outputs/{args.dataset_name}"
 
-    with open(os.path.join(result_dir, "captions.json"), "r") as captions_file:
+    with open(os.path.join(result_dir, "descriptions/full_descriptions.json"), "r") as captions_file:
         captions_dict = json.load(captions_file)
 
     num_episodes = sum([len(v) for v in captions_dict.values()])
