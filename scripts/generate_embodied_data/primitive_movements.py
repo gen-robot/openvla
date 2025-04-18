@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def describe_move(move_vec):
+def describe_move(move_vec, raw_move_vec):
     names = [
         {-1: "backward", 0: None, 1: "forward"},
         {-1: "right", 0: None, 1: "left"},
@@ -42,14 +42,36 @@ def describe_move(move_vec):
         description = description + names[6][move_vec[6]]
 
     if len(description) == 0:
-        description = "stop"
-
+        # Find the most significant movement even if below threshold
+        abs_raw = np.abs(raw_move_vec)
+        max_idx = np.argmax(abs_raw[:7])
+        direction = 1 if raw_move_vec[max_idx] > 0 else -1
+        
+        # Handle the case where max_idx is 4 (not in names dictionary)
+        if max_idx == 4:
+            max_idx = 3  # Treat as tilt, same as we do for move_vec[3]
+        
+        if max_idx in names and direction in names[max_idx]:
+            action_name = names[max_idx][direction]
+            if max_idx < 3:
+                description = "move " + action_name
+            else:
+                description = action_name
+        else:
+            # Fallback to a default movement if we can't determine one
+            description = "stop"
+    
     return description
 
 
-def classify_movement(move, threshold=0.01):
+def classify_movement(move, threshold=0.005):
     diff = move[-1] - move[0]
-
+    # Store the original diff for determining most significant movement
+    raw_diff = diff.copy()
+    
+    # This code normalizes the XYZ movement vector if its magnitude exceeds a threshold
+    # It ensures that large movements are scaled down to a consistent maximum size
+    # while preserving the direction of movement
     if np.sum(np.abs(diff[:3])) > 3 * threshold:
         diff[:3] *= 3 * threshold / np.sum(np.abs(diff[:3]))
 
@@ -57,7 +79,7 @@ def classify_movement(move, threshold=0.01):
 
     move_vec = 1 * (diff > threshold) - 1 * (diff < -threshold)
 
-    return describe_move(move_vec), move_vec
+    return describe_move(move_vec, raw_diff), move_vec
 
 
 move_actions = dict()

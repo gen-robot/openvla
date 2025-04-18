@@ -59,7 +59,7 @@ if not os.path.exists(args.results_path):
 results_json_path = os.path.join(args.results_path, f"results_{args.id}.json")
 
 def create_user_prompt(lang_instruction):
-    user_prompt = "Briefly describe the things in this scene and their spatial relations to each other."
+    user_prompt = "Briefly describe the things in this scene and their spatial relations to each other. Make sure to describe the gripper and its interactions with objects in the scene."
     # user_prompt = "Briefly describe the objects in this scene."]
     lang_instruction = lang_instruction.strip()
     if len(lang_instruction) > 0 and lang_instruction[-1] == ".":
@@ -77,11 +77,22 @@ for idx, episode in tqdm(enumerate(ds), total=len(ds), desc=f"Generating descrip
         if isinstance(episode_id, bytes):
             episode_id = episode_id.decode()
     file_path = episode["episode_metadata"]["file_path"].numpy().decode()
-    for step in episode["steps"]:
+    
+    # Initialize episode entry if it doesn't exist
+    if file_path not in results_json.keys():
+        results_json[file_path] = {}
+    
+    if str(episode_id) not in results_json[file_path]:
+        results_json[file_path][str(episode_id)] = {
+            "episode_id": str(episode_id),
+            "file_path": file_path,
+            "steps": []
+        }
+    
+    for step_idx, step in enumerate(episode["steps"]):
         lang_instruction = step["language_instruction"].numpy().decode()
         image = Image.fromarray(step["observation"]["image"].numpy())
 
-        # user_prompt = "Describe the objects in this scene. Be specific."
         user_prompt = create_user_prompt(lang_instruction)
         prompt_builder = vlm.get_prompt_builder()
         prompt_builder.add_turn(role="human", message=user_prompt)
@@ -96,18 +107,14 @@ for idx, episode in tqdm(enumerate(ds), total=len(ds), desc=f"Generating descrip
             max_new_tokens=64,
             min_length=1,
         )
-        break
-
-    episode_json = {
-        "episode_id": str(episode_id),
-        "file_path": file_path,
-        "caption": caption,
-    }
-
-    if file_path not in results_json.keys():
-        results_json[file_path] = {}
-
-    results_json[file_path][str(episode_id)] = episode_json
-
-    with open(results_json_path, "w") as f:
-        json.dump(results_json, f, cls=NumpyFloatValuesEncoder)
+        
+        # Store step info
+        step_data = {
+            "step_idx": step_idx,
+            "caption": caption,
+        }
+        results_json[file_path][str(episode_id)]["steps"].append(step_data)
+        
+        # Save after each step to preserve progress
+        with open(results_json_path, "w") as f:
+            json.dump(results_json, f, indent=2, cls=NumpyFloatValuesEncoder)

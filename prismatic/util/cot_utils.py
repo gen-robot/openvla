@@ -36,12 +36,12 @@ class CotTag(enum.Enum):
     TASK = "TASK:"
     PLAN = "PLAN:"
     VISIBLE_OBJECTS = "VISIBLE OBJECTS:"
+    RELEVANT_OBJECTS = "RELEVANT OBJECTS:"
     SUBTASK_REASONING = "SUBTASK REASONING:"
     SUBTASK = "SUBTASK:"
-    RELEVANT_OBJECTS = "RELEVANT OBJECTS:"
+    GRIPPER_POSITION = "GRIPPER POSITION:"
     MOVE_REASONING = "MOVE REASONING:"
     MOVE = "MOVE:"
-    GRIPPER_POSITION = "GRIPPER POSITION:"
     ACTION = "ACTION:"
 
 
@@ -54,12 +54,12 @@ def get_cot_tags_list():
         CotTag.TASK.value,
         CotTag.PLAN.value,
         CotTag.VISIBLE_OBJECTS.value,
+        CotTag.RELEVANT_OBJECTS.value,
         CotTag.SUBTASK_REASONING.value,
         CotTag.SUBTASK.value,
-        CotTag.RELEVANT_OBJECTS.value,
+        CotTag.GRIPPER_POSITION.value,
         CotTag.MOVE_REASONING.value,
         CotTag.MOVE.value,
-        CotTag.GRIPPER_POSITION.value,
         CotTag.ACTION.value,
     ]
 
@@ -69,12 +69,12 @@ def get_cot_database_keys():
         CotTag.TASK.value: "task",
         CotTag.PLAN.value: "plan",
         CotTag.VISIBLE_OBJECTS.value: "bboxes",
+        CotTag.RELEVANT_OBJECTS.value: "relevant_objects",
         CotTag.SUBTASK_REASONING.value: "subtask_reason",
         CotTag.SUBTASK.value: "subtask",
-        CotTag.RELEVANT_OBJECTS.value: "relevant_objects",
+        CotTag.GRIPPER_POSITION.value: "gripper",
         CotTag.MOVE_REASONING.value: "move_reason",
         CotTag.MOVE.value: "move",
-        CotTag.GRIPPER_POSITION.value: "gripper",
         CotTag.ACTION.value: "action",
     }
 
@@ -87,7 +87,16 @@ def make_tf_hash_table(raw_dict):
     def reasoning_dict_to_str(d):
         tags = get_cot_tags_list()[:-1]  # exclude ACTION
         database_keys = get_cot_database_keys()
-        reasoning_parts = [(tag, d[database_keys[tag]]) for tag in tags if database_keys[tag] in d.keys()] #
+        # reasoning_parts = [(tag, d[database_keys[tag]]) for tag in tags if database_keys[tag] in d.keys()] #
+
+        reasoning_parts = []
+        for tag in tags:
+            if database_keys[tag] in d.keys():
+                part = d[database_keys[tag]]
+                part = str(part).strip()
+                if not part.endswith("."):
+                    part += "."
+                reasoning_parts.append((tag, part))
 
         return "@".join(f"{tag}@{part}" for tag, part in reasoning_parts)
 
@@ -130,9 +139,19 @@ def make_tf_hash_table(raw_dict):
                         if 0 <= int(i) < len(trajectory_features["bboxes"]):
                             if len(trajectory_features["bboxes"][int(i)]) > 0:
                                 boxes_list = trajectory_features["bboxes"][int(i)]
-                                reasoning_dict["bboxes"] = ", ".join(
-                                    [f"{name} {box!s}" for prob, name, box in boxes_list]
-                                )
+                                if isinstance(boxes_list[0], list):
+                                    reasoning_dict["bboxes"] = ", ".join(
+                                        [f"{name} {box!s}" for prob, name, box in boxes_list]
+                                    )
+                                elif isinstance(boxes_list[0], dict):
+                                    reasoning_dict["bboxes"] = ", ".join(
+                                        [f"{box['label']} {box['box']!s}" for box in boxes_list]
+                                    )
+                                    # reasoning_dict["bboxes"] = ", ".join(
+                                    #     [f"{name} {box!s}" for prob, name, box in boxes_list]
+                                    # )
+                                else:
+                                    import pdb; pdb.set_trace()
 
                 values.append(reasoning_dict_to_str(reasoning_dict))
 

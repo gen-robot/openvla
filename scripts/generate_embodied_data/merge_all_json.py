@@ -33,7 +33,7 @@ bboxes_files = glob.glob(os.path.join(results_path, "bboxes", "results_*.json"))
 
 # If no split files found, use the original file paths
 if not reasoning_files:
-    assert os.path.exists(os.path.join(results_path, "full_reasonings.json")), "Reasoning file not found"
+    assert os.path.exists(os.path.join(results_path, "reasonings", "full_reasonings.json")), "Reasoning file not found"
     reasoning_files = [os.path.join(results_path, "reasonings", "full_reasonings.json")]
 if not gripper_files:
     assert os.path.exists(os.path.join(results_path, "gripper_positions", "full_gripper_positions.json")), "Gripper file not found"

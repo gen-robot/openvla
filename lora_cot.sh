@@ -1,7 +1,7 @@
 task_name="libero_object_no_noops"
 use_film=False                      # if True, it will inject the language instruction into the visual encoder via FiLM
-use_proprio=True                    # if True, it will use the proprioceptive sensor data, which would be useful for L1 regression or diffusion head
-num_images_in_input=2               # the number of images in the input. if you want to use wrist images, set it to 3 or whatever you want.
+use_proprio=False                    # if True, it will use the proprioceptive sensor data, which would be useful for L1 regression or diffusion head
+num_images_in_input=1               # the number of images in the input. if you want to use wrist images, set it to 3 or whatever you want.
 ####
 # if use_l1_regression and use_diffusion are both False, 
 # it will use the original discrete action head. 
@@ -10,10 +10,10 @@ num_images_in_input=2               # the number of images in the input. if you 
 use_l1_regression=False              # if True, it will use the L1 regression head
 use_diffusion=False                 # if True, it will use the diffusion head
 merge_lora_during_training=False    # if True, it will merge the LoRA weights during training, which will slightly increase the GPU memory usage
-num_actions_chunk=8                 # the number of actions to be predicted
+num_actions_chunk=1                 # the number of actions to be predicted
 use_parallel_decoding=False         # if you use a large chunk_size, make sure you have enabled parallel decoding in the model to increase the throughput
 is_debug=False
-enable_cot=False
+enable_cot=True
 use_lora=True
 
 # if is_debug is True, set num_gpus to 1, set project name to OpenVLA-debug
@@ -24,12 +24,12 @@ if [ ${is_debug} = True ]; then
 #     num_gpus=8
 #     project_name="VLA-Reasoning"
 else
-    num_gpus=4
+    num_gpus=8
     project_name="VLA-Reasoning"
 fi
 
 torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
-  --vla_path "openvla/openvla-7b" \
+  --vla_path "openvla/openvla-7b-finetuned-libero-object" \
   --data_root_dir datasets/libero_data \
   --dataset_name ${task_name} \
   --run_root_dir checkpoints/${task_name} \

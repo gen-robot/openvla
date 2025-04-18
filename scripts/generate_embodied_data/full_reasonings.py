@@ -5,8 +5,11 @@ import time
 import tqdm
 
 import numpy as np
-import google.generativeai as genai
+# import google.generativeai as genai
+from google import genai
 from google.api_core.exceptions import ResourceExhausted
+# from google.generativeai import types
+from google.genai import types
 
 from scripts.generate_embodied_data.primitive_movements import get_move_primitives_episode
 from scripts.generate_embodied_data.utils import Gemini
@@ -15,8 +18,35 @@ import tensorflow as tf
 # Configure Tensorflow with *no GPU devices* (to prevent clobber with PyTorch)
 tf.config.set_visible_devices([], "GPU")
 
+# Add constants for system instructions
+REASONING_SYSTEM_INSTRUCTIONS = """
+You are an expert reinforcement learning researcher analyzing robotic trajectories. 
+Your task is to provide detailed reasoning for each step in a robot's execution path.
 
-def build_prompt(features, language_instruction, caption=None, list_only_moves=False):
+Your analysis should be thorough, precise, and grounded in the observable data. 
+Focus on explaining the robot's decision-making process based on its current state, 
+the task requirements, and the physical environment.
+
+Format your response according to the tags requested in the prompt.
+"""
+
+def get_safety_settings():
+    """Return safety settings for Gemini API"""
+    return [
+        types.SafetySetting(
+            category="HARM_CATEGORY_DANGEROUS_CONTENT",
+            threshold="BLOCK_ONLY_HIGH",
+        ),
+    ]
+
+# Add a Gemini client initialization function
+def initialize_gemini_client(api_key, model_id="gemini-2.0-flash"):
+    """Initialize and return the Gemini client"""
+    client = genai.Client(api_key=api_key)
+    print(f"Using Gemini model: {model_id}")
+    return client
+
+def build_prompt(features, language_instruction, caption=None, list_only_moves=False, task_objects=None):
     structured_features = "{\n"
 
     keys = list(features.keys())
@@ -67,6 +97,16 @@ The robot is operating in the following environment. {caption}
 
 """
 
+    # Add task-relevant objects section if provided
+    task_objects_section = ""
+    if task_objects and len(task_objects) > 0:
+        task_objects_str = ", ".join([f'"{obj}"' for obj in task_objects])
+        task_objects_section = f"""## Task-relevant objects
+
+The following objects are relevant for this task: [{task_objects_str}]
+
+"""
+
     break_line = ""  # for line formatting
 
     return f"""# Annotate the training trajectory with reasoning
@@ -84,7 +124,7 @@ trajectory_features = {structured_features}
 
 {features_desc}
 
-{caption}## Your objective
+{caption}{task_objects_section}## Your objective
 
 I want you to annotate the given trajectory with reasoning. That is, for each step, I need to know not only {
 break_line}which action should be chosen, but importantly what reasoning justifies that action choice. I want you to {
@@ -118,18 +158,27 @@ break_line}above. The reasoning should be a single string that describes the rea
 break_line}includes all the required features.
 
 Each reasoning string should have the following form:
-- Describe the full task that remains to be completed (but only describe what remains), and place it inside a {
+- Describe the full task to be completed and use consistent words with the task instruction, and place it inside a {
 break_line}tag <task>.
-- Describe the complete high-level plan for completing the remaining task (the list of remaining high-level steps), {
-break_line}and place it inside a tag <plan>.
+- Describe the complete high-level plan for completing the full task (the list of high-level steps). Number each step {
+break_line}with "1./2./3." format and separate with dots (Example: "1. Pick up the cup. 2. Move to the table"). {
+break_line}Place this inside a tag <plan>.
 - Describe the high-level step that should be executed now (chosen from the list of high-level steps), and place it {
 break_line}inside a tag <subtask>.
 - Describe why the chosen high-level step should be executed now, which features of the current environment influence {
 break_line}that decision, and how it should be done. Place it within a tag <subtask_reason>.
-- Identify and describe the key objects that are relevant for the current subtask, and place them in a list of object names inside a tag <relevant_objects>.
-- Describe the current primitive movement of the arm that needs to be executed, and place it inside a tag <move>.
+- Identify and describe the key objects that are relevant for the current subtask, and place them as a comma-separated {
+break_line}list of object names without square brackets (Example: "cup, table, plate") inside a tag <relevant_objects>.
+- Include ONLY the raw move primitive string itself inside the <move> tag, without any description or additional text. {
+break_line}For example: <move>move forward down</move> or <move>close gripper</move>. Important: Do not use "stop" as a {
+break_line}movement - this can cause the robot to lock up during execution. If you see a "stop" in the trajectory, {
+break_line}interpret it as a pause before the next meaningful action.
 - Describe why the chosen movement should be executed now and which features of the current environment influence that {
-break_line}decision. Place it inside a tag <move_reason>.
+break_line}decision. Don't just explain the move - analyze the current state and environment, then explain what {
+break_line}motivates this specific movement choice. Use qualitative descriptions instead of detailed numerical values - {
+break_line}for example, say "The gripper is positioned to the left of the cup, so it needs to move right to align with it" or {
+break_line}"The gripper is too high above the object, so it needs to move down to reach a proper grasping position". {
+break_line}Place it inside a tag <move_reason>.
 
 ## Task summary
 
@@ -144,7 +193,8 @@ Here is a breakdown of what needs to be done:
   3. Provide justification for the movement
 - The reasoning should be descriptive and precise. You should provide exactly one reasoning string for each step on the {
 break_line}trajectory specified by `trajectory_features`.
-- At the very end of the response, write a single label FINISHED to indicate that the answer is complete."""
+- At the very end of the response, write a single label FINISHED to indicate that the answer is complete.
+"""
 
 
 def find_task_occurrences(input_string, tags):
@@ -195,41 +245,289 @@ def extract_reasoning_dict(reasoning_output, tags=("task", "plan", "subtask", "s
 
     return trajectory
 
+def build_step_prompt(features, step_idx, window_size, language_instruction, caption=None, task_objects=None):
+    """
+    Build a prompt for generating reasoning for a single step with context window.
+    
+    Args:
+        features: Dictionary containing trajectory features
+        step_idx: Index of the current step to focus on
+        window_size: Number of steps to include before and after the current step
+        language_instruction: The natural language instruction for the task
+        caption: Optional caption describing the scene
+        task_objects: Optional list of task-relevant objects
+        
+    Returns:
+        A prompt string for the LLM to generate reasoning for the specific step
+    """
+    # Calculate window boundaries
+    total_steps = len(features["move_primitive"])
+    start_idx = max(0, step_idx - window_size)
+    end_idx = min(total_steps, step_idx + window_size + 1)
+    
+    # Create a subset of features for the window
+    windowed_features = {key: features[key][start_idx:end_idx] for key in features if key in ["move_primitive", "state_3d", "euler", "gripper_openness"]}
+    
+    # Find the relative position of the current step in the window
+    current_relative_idx = step_idx - start_idx
+    
+    # Build a structured representation of the features in the window
+    structured_features = "{\n"
+    keys = list(windowed_features.keys())
+    
+    for i in range(len(windowed_features[keys[0]])):
+        # Add a marker to highlight the current step
+        step_marker = " (CURRENT STEP) " if i == current_relative_idx else ""
+        
+        structured_features = structured_features + f'    {start_idx + i}{step_marker}: {"{"}\n'
+        
+        for key in keys:
+            feature_value = windowed_features[key][i]
+            if isinstance(feature_value, str):
+                feature_value = f'"{feature_value}"'
+            elif isinstance(feature_value, np.ndarray):
+                feature_value = feature_value.tolist()
+            
+            structured_features = structured_features + f'        "{key}": {feature_value},\n'
+        
+        structured_features = structured_features + "    },\n"
+    
+    structured_features = structured_features + "}"
+    
+    # Create features description
+    features_desc = (
+        "Each entry in that dictionary corresponds to a single step on "
+        "the trajectory. The provided features are the following:\n"
+        "\n"
+        '- "state_3d" are the current 3d coordinates of the robotic arm end effector; '
+        "moving forward increases the first coordinate; moving left increases the second "
+        "coordinate; moving up increases the third coordinate,\n"
+        '- "euler" represents the orientation of the end effector in Euler angles (roll, pitch, yaw),\n'
+        '- "gripper_openness" indicates how open the gripper is, with higher values meaning more open,\n'
+        '- "move_primitive" describes the move that is about to be executed,'
+    )
+    
+    # Process caption and task objects
+    if caption is None:
+        caption = ""
+    else:
+        caption = f"""## Scene description
 
-def get_reasoning_dict(features, metadata, lm, logging_name=None):
+The robot is operating in the following environment. {caption}
+
+"""
+
+    task_objects_section = ""
+    if task_objects and len(task_objects) > 0:
+        task_objects_str = ", ".join([f'"{obj}"' for obj in task_objects])
+        task_objects_section = f"""## Task-relevant objects
+
+The following objects are relevant for this task: [{task_objects_str}]
+
+"""
+
+    break_line = ""  # for line formatting
+    
+    return f"""# Analyze a single step in the robot trajectory
+
+## Step-specific analysis
+
+You're focusing on step {step_idx} of a robot trajectory (marked as CURRENT STEP in the data below). The robot is executing a task specified by the instruction: "{language_instruction}". 
+
+I've provided a window of context showing steps before and after the current step to help you understand the sequence of actions.
+
+```python
+trajectory_window = {structured_features}
+```
+
+{features_desc}
+
+{caption}{task_objects_section}## Your objective
+
+I want you to analyze ONLY THE CURRENT STEP (step {step_idx}) with detailed reasoning. Focus on explaining:
+1. What action is being taken at this specific step
+2. Why this action makes sense in the context of the overall task
+3. How this step relates to previous and upcoming steps
+
+### Analyze the current step in the context of the full task
+
+Start by briefly describing the overall task. Then focus specifically on the current step {step_idx}, explaining:
+- What is the robot trying to accomplish at this moment?
+- How does this specific action contribute to the overall task?
+- What objects or environmental features are influencing this action?
+- Why is this particular primitive movement appropriate now?
+
+Be descriptive but ensure your analysis is consistent with the trajectory data provided in the window.
+
+### Provide structured reasoning for the current step
+
+For step {step_idx}, describe the reasoning that determines the correct action. Include:
+- The full task objective
+- The high-level plan for the entire task
+- The current progress
+- Relevant objects for determining the next action
+- The plan for upcoming steps
+
+Format your reasoning with the following structured tags:
+- <task>Provide a clear, concise description of the complete task the robot needs to accomplish</task>
+- <plan>Outline the full high-level plan for completing the task. Number each step (e.g., "1. Pick up the cup. 2. Move to the table. 3. Place the cup on the table.")</plan>
+- <progress>Describe what has been accomplished so far and what remains to be done</progress>
+- <subtask>Identify the specific high-level step currently being executed</subtask>
+- <subtask_reason>Explain why this particular subtask needs to be executed at this moment and how it fits into the overall plan</subtask_reason>
+- <relevant_objects>List all objects that are important for the current subtask, separated by commas (e.g., "cup, table, plate")</relevant_objects>
+- <move>Include ONLY the raw move primitive string itself, without any description or additional text. For example: <move>move forward down</move> or <move>close gripper</move>. Important: Do not use "stop" as a movement - this can cause the robot to lock up during execution. If you see a "stop" in the trajectory, interpret it as a pause before the next meaningful action.</move>
+- <move_reason>Provide a detailed analysis of why this specific movement is necessary right now. Consider the robot's current position relative to objects, environmental constraints, and task requirements. Use qualitative descriptions rather than numerical values (e.g., "The gripper needs to move lower to properly grasp the handle" rather than specific coordinates)</move_reason>
+
+Your response should be formatted as:
+{step_idx}: "Your full structured reasoning with all tags here"
+
+## Task summary
+
+Focus only on analyzing step {step_idx} with detailed reasoning that explains what the robot is doing, why it's doing it, and how this specific action contributes to the overall task.
+"""
+
+
+class StepByStepGemini:
+    """A wrapper around the Gemini client that processes reasoning step by step with corresponding images."""
+    
+    def __init__(self, client, model_id="gemini-2.0-flash"):
+        self.client = client
+        self.model_id = model_id
+        self.safety_settings = get_safety_settings()
+        
+    def generate_step_by_step(self, prompt, features, language_instruction, images, task_objects=None):
+        """Generate reasoning for each step using the corresponding image."""
+        step_count = len(features["move_primitive"])
+        
+        # Process each step with its corresponding image
+        step_reasonings = {}
+        window_size = 5  # Number of steps before and after to include for context
+        max_retries = 5  # Maximum number of retry attempts per step
+        
+        for step_idx in tqdm.tqdm(range(step_count), desc="Processing individual steps"):
+            # Generate step-specific prompt using the new function
+            current_step_prompt = build_step_prompt(
+                features=features,
+                step_idx=step_idx,
+                window_size=window_size,
+                language_instruction=language_instruction,
+                caption=None if not hasattr(prompt, 'caption') else prompt.caption,
+                task_objects=task_objects
+            )
+        
+            # Add retry loop for each step
+            success = False
+            for attempt in range(max_retries):
+                try:
+                    step_image = images[step_idx] if step_idx < len(images) else images[-1]
+                    response = self.client.models.generate_content(
+                        model=self.model_id,
+                        contents=[current_step_prompt, step_image],
+                        config=types.GenerateContentConfig(
+                            system_instruction=REASONING_SYSTEM_INSTRUCTIONS,
+                            temperature=0.2,
+                            safety_settings=self.safety_settings,
+                        )
+                    )
+                    step_reasoning = response.text
+
+                    # Check if the response is empty or too minimal
+                    if not step_reasoning or len(step_reasoning.strip()) < 20 or not any(tag in step_reasoning for tag in ["<task>", "<move>", "<plan>"]):
+                        raise ValueError(f"Generated reasoning for step {step_idx} is empty or insufficient")
+                    
+                    # print(f"Step {step_idx} reasoning: {step_reasoning}")
+                    
+                    step_reasonings[str(step_idx)] = step_reasoning
+                    success = True
+                    break
+                except Exception as e:
+                    print(f"Error generating reasoning for step {step_idx}: {e}")
+                    print(f"Attempt {attempt+1}/{max_retries} failed. Retrying...")
+                    time.sleep(5)
+                    # Check if we're on the last retry attempt
+                    if attempt == max_retries - 1:
+                        import pdb; pdb.set_trace()
+        
+        # Format the output as a dictionary string
+        output = "{\n"
+        for step_idx, reasoning in step_reasonings.items():
+            cleaned_reasoning = reasoning.replace('\n', ' ').replace('"', '\\"')
+            output += f'  {step_idx}: "{cleaned_reasoning}",\n'
+        output += "}\n\nFINISHED"
+        
+        return output
+    
+    def _fallback_step_by_step_generation(self, features, images, task_objects=None, base_prompt=None):
+        """Fallback method that processes each step individually if the full generation fails."""
+        # This method is now redundant with the improved step-by-step approach
+        # Keeping for compatibility, but simply calling the main method
+        return self.generate_step_by_step(base_prompt, features, images, task_objects)
+
+
+def get_reasoning_dict(features, metadata, client, model_id="gemini-2.0-flash", images=None, task_objects=None, logging_name=None):
     language_instruction = metadata["language_instruction"]
     caption = metadata["caption"] if "caption" in metadata.keys() else None
 
-    prompt = build_prompt(features, language_instruction, caption=caption, list_only_moves=False)
-    print("metadata:", metadata, "\nprompt:", prompt)
+    # Generate the main prompt using the existing function
+    prompt = build_prompt(features, language_instruction, caption=caption, list_only_moves=False, task_objects=task_objects)
+    # print("metadata:", metadata, "\nprompt:", prompt)
 
-    # add a time bar to log the time taken to generate the reasoning
+    # Set up safety settings
+    safety_settings = get_safety_settings()
+
+    # Add a time bar to log the time taken to generate the reasoning
     with tqdm.tqdm(total=100, desc=f"Generating reasoning for {logging_name}") as pbar:
         max_attempts = 3
         reasoning_output = None
+        
         for attempt in range(max_attempts):
-            reasoning_output = lm.generate(prompt)
-            if reasoning_output is not None:
-                break
+            try:
+                # If images are provided, use step-by-step processing
+                if images and len(images) > 0:
+                    # Create a wrapper that processes step by step
+                    step_by_step_lm = StepByStepGemini(client, model_id)
+                    
+                    # Generate reasoning step by step
+                    reasoning_output = step_by_step_lm.generate_step_by_step(
+                        prompt=prompt,
+                        features=features,
+                        language_instruction=language_instruction,
+                        images=images,
+                        task_objects=task_objects
+                    )
+                else:
+                    # No images, use the standard prompt-based generation
+                    response = client.models.generate_content(
+                        model=model_id,
+                        contents=[prompt],
+                        config=types.GenerateContentConfig(
+                            system_instruction=REASONING_SYSTEM_INSTRUCTIONS,
+                            temperature=0.2,
+                            safety_settings=safety_settings,
+                        )
+                    )
+                    reasoning_output = response.text
+                
+                if reasoning_output is not None:
+                    break
+            except Exception as e:
+                print(f"Error in attempt {attempt+1}: {str(e)}")
+                # import pdb; pdb.set_trace()
+            
             print(f"Attempt {attempt+1}/{max_attempts} failed. Retrying...")
+            time.sleep(1)  # Small delay before retrying
+            
         pbar.update(100)
+    
     if reasoning_output is None:
         print("reasoning output is None.")
         import pdb; pdb.set_trace()
+    
     print("reasoning:", reasoning_output)
-
-    # save reasoning output to file
-    # with open("reasoning_output.txt", "r") as f:
-    #     # f.write(reasoning_output)
-    #     # read the content into a string
-    #     reasoning_output = ""
-    #     for line in f:
-    #         reasoning_output += line
-
     return extract_reasoning_dict(reasoning_output)
 
 
-def build_single_reasoning(episode_index, builder, lm, captions):
+def build_single_reasoning(episode_index, builder, client, model_id, captions, object_lists=None):
     ds = builder.as_dataset(split=f"train[{episode_index}:{episode_index + 1}]")
     episode = next(iter(ds))
     total_episode_num = builder.info.splits["train"].num_examples
@@ -252,10 +550,20 @@ def build_single_reasoning(episode_index, builder, lm, captions):
 
     if isinstance(mt["episode_id"], bytes):
         mt["episode_id"] = mt["episode_id"].decode()
-    mt["caption"] = captions[mt["file_path"]][mt["episode_id"]]["caption"]
+    
+    # Get caption from the provided captions dictionary
+    mt["caption"] = captions[mt["file_path"]][mt["episode_id"]]["description"]
+    
+    # Get task-relevant objects if provided
+    task_objects = None
+    if object_lists and mt["file_path"] in object_lists and mt["episode_id"] in object_lists[mt["file_path"]]:
+        task_objects = object_lists[mt["file_path"]][mt["episode_id"]].get("task_relevant_objects", [])
+    
+    # Extract images from each step
+    images = [Image.fromarray(step["observation"]["image"].numpy()) for step in episode["steps"]]
 
     logging_name = f"Episode {episode_index} / {total_episode_num}"
-    reasoning = get_reasoning_dict(ft, mt, lm, logging_name)
+    reasoning = get_reasoning_dict(ft, mt, client, model_id, images=images, task_objects=task_objects, logging_name=logging_name)
     entry = {"reasoning": reasoning, "features": ft, "metadata": mt}
 
     return entry
@@ -277,9 +585,15 @@ def jsonify(data):
     return data
 
 
-def generate_reasonings(builder, episode_indexes, captions_dict, save_path="reasonings.json"):
+def generate_reasonings(builder, episode_indexes, captions_dict, save_path="reasonings.json", object_lists_path=None, model_id="gemini-2.0-flash"):
     reasonings = dict()
-    lm = Gemini()
+    
+    # Initialize Gemini client
+    GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+    if not GOOGLE_API_KEY:
+        raise ValueError("GOOGLE_API_KEY environment variable is not set")
+    
+    client = initialize_gemini_client(GOOGLE_API_KEY, model_id)
 
     if os.path.exists(save_path):
         print(save_path, "existing, loading contents")
@@ -288,18 +602,20 @@ def generate_reasonings(builder, episode_indexes, captions_dict, save_path="reas
 
         print("loaded reasonings:", sum([len(v) for v in reasonings.values()]), "entries")
 
-    # with open("captions.json", "r") as captions_file:
-    #     captions_dict = json.load(captions_file)
+    # Load object lists and task-relevant objects if provided
+    object_lists = None
+    if object_lists_path and os.path.exists(object_lists_path):
+        print(f"Loading object lists from {object_lists_path}")
+        with open(object_lists_path, "r") as f:
+            object_lists = json.load(f)
 
-    for i in episode_indexes:
-        entry = build_single_reasoning(i, builder, lm, captions_dict)
+    for i in tqdm.tqdm(episode_indexes, desc="Generating reasonings for Episodes"):
+        entry = build_single_reasoning(i, builder, client, model_id, captions_dict, object_lists)
 
         if entry["metadata"]["file_path"] in reasonings.keys():
             reasonings[entry["metadata"]["file_path"]][entry["metadata"]["episode_id"]] = entry
-            # reasonings[entry["metadata"]["file_path"]][i] = entry
         else:
             reasonings[entry["metadata"]["file_path"]] = {entry["metadata"]["episode_id"]: entry}
-            # reasonings[entry["metadata"]["file_path"]] = {i: entry}
 
         print("computed reasoning:", entry)
 
@@ -310,6 +626,7 @@ def generate_reasonings(builder, episode_indexes, captions_dict, save_path="reas
 
 if __name__ == "__main__":
     import tensorflow_datasets as tfds
+    from PIL import Image
  
     import argparse
     parser = argparse.ArgumentParser()
@@ -317,12 +634,24 @@ if __name__ == "__main__":
     parser.add_argument("--splits", type=int, default=4)
     parser.add_argument("--dataset_name", type=str, default="cobot_rlds")
     parser.add_argument("--data_dir", type=str, default="datasets")
+    parser.add_argument("--object_lists_path", type=str, default=None, 
+                       help="Path to pre-generated object lists JSON file")
+    parser.add_argument("--model", type=str, default="gemini-2.0-flash",
+                       help="Gemini model to use (e.g., gemini-2.0-flash, gemini-2.0-flash)")
     args = parser.parse_args()
 
     result_dir = f"./outputs/{args.dataset_name}"
 
-    with open(os.path.join(result_dir, "descriptions/full_descriptions.json"), "r") as captions_file:
+    with open(os.path.join(result_dir, "object_lists_gemini/full_object_lists.json"), "r") as captions_file:
         captions_dict = json.load(captions_file)
+
+    # Define the object lists path if not provided
+    object_lists_path = args.object_lists_path
+    if not object_lists_path:
+        object_lists_path = os.path.join(result_dir, "object_lists_gemini/full_object_lists.json")
+        if not os.path.exists(object_lists_path):
+            print(f"Warning: Object lists file not found at {object_lists_path}. Continuing without task-relevant objects.")
+            object_lists_path = None
 
     num_episodes = sum([len(v) for v in captions_dict.values()])
     print("num_episodes in captions:", num_episodes)
@@ -368,8 +697,9 @@ if __name__ == "__main__":
     
     episode_indexes = list(range(start_episode_id, end_episode_id))
 
-    save_path = os.path.join(result_dir, f"reasonings/reasonings_{args.id}.json")
+    save_path = os.path.join(result_dir, f"reasonings_gemini/reasonings_{args.id}.json")
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-    generate_reasonings(builder, episode_indexes, captions_dict, save_path=save_path)
+    generate_reasonings(builder, episode_indexes, captions_dict, save_path=save_path, 
+                        object_lists_path=object_lists_path, model_id=args.model)
 
