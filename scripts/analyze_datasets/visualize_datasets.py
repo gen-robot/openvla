@@ -26,8 +26,8 @@ from prismatic.vla.datasets.rlds.oxe.configs import OXE_DATASET_CONFIGS, STATE_D
 
 @dataclass
 class Config:
-    name: str = "bridge_orig"
-    data_dir: str = "/nvme_data/embodied_agent/oxe_data/rlds"
+    name: str = "libero_object_no_noops"
+    data_dir: str = "/nvme_data/embodied_agent/libero_data/modified_libero_rlds_episode_id"
 
     #################################################################################################################
     # Model-specific parameters
@@ -175,7 +175,8 @@ def main(cfg: Config):
                     action_head=action_head, 
                     proprio_projector=proprio_projector, 
                     use_film=cfg.use_film, 
-                    do_sample=False)
+                    do_sample=False,
+                    enable_cot="cot" in cfg.pretrained_checkpoint)
 
                 if "cot" in cfg.pretrained_checkpoint:
                     generated_text = processor.batch_decode(generated_ids)[0]

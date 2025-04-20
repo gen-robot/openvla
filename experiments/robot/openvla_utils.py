@@ -799,7 +799,7 @@ def get_vla_action(
                 )
                 prompt += " " + cot_prompt + " ACTION: "
             else:
-                prompt += " ACTION: "
+                prompt += " TASK:"
 
         # Process primary image
         inputs = processor(prompt, primary_image).to(DEVICE, dtype=torch.bfloat16)

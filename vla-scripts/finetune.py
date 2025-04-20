@@ -703,7 +703,10 @@ def save_training_checkpoint(
     if distributed_state.is_main_process:
         # Save processor and LoRA adapter
         processor.save_pretrained(checkpoint_dir)
-        vla.module.save_pretrained(adapter_dir)
+        if cfg.use_lora:
+            vla.module.save_pretrained(adapter_dir)
+        else:
+            vla.module.save_pretrained(checkpoint_dir)
 
         # Save other components
         if cfg.use_proprio and proprio_projector is not None:

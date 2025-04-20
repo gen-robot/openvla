@@ -287,6 +287,8 @@ def get_metadata(reasoning: Dict[str, str]):
 
     if f" {CotTag.VISIBLE_OBJECTS.value}" in reasoning:
         for sample in reasoning[f" {CotTag.VISIBLE_OBJECTS.value}"].split("]"):
+            if "[" not in sample:
+                continue
             obj = sample.split("[")[0]
             if obj.strip() == "":
                 continue

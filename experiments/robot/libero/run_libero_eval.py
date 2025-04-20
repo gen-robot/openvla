@@ -200,7 +200,8 @@ def check_unnorm_key(cfg: GenerateConfig, model) -> None:
 def setup_logging(cfg: GenerateConfig):
     """Set up logging to file and optionally to wandb."""
     # Create run ID
-    run_id = f"EVAL-{cfg.task_suite_name}-{cfg.model_family}-{DATE_TIME}"
+    checkpoint_name = cfg.pretrained_checkpoint.rstrip("/").split("/")[-1]
+    run_id = f"EVAL-{cfg.task_suite_name}-{cfg.model_family}-{checkpoint_name}-{DATE_TIME}"
     if cfg.run_id_note is not None:
         run_id += f"--{cfg.run_id_note}"
 
@@ -357,7 +358,7 @@ def run_episode(
                         generated_text = generated_ids
                     else:
                         generated_text = processor.batch_decode(generated_ids)[0]
-                    # print("Generated text: ", generated_text)
+                    print("Generated text: ", generated_text)
                     vla_image = visualize_reasoning(observation["full_image"], task_description, generated_text)
                     cot_images.append(vla_image)
                 except Exception as e:
