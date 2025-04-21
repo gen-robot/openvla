@@ -1,4 +1,4 @@
-GPU_LIST=(0 1 2 3 4 5 6 7)
+GPU_LIST=(4 5 6 7)
 NUM_GPUS=${#GPU_LIST[@]}
 NUM_MAX_PROCESSES=16
 dataset_name=$1
@@ -35,6 +35,12 @@ if ! tmux has-session -t $session_name 2>/dev/null; then
         fi
         tmux send-keys -t $session_name:$i "conda activate embodied; start_proxy" C-m
     done
+else
+    read -p "Session already exists. Continue with execution? (y/n) " choice
+    if [[ $choice != "y" && $choice != "Y" ]]; then
+        echo "Exiting..."
+        exit 0
+    fi
 fi
 
 # run the commands in the windows
@@ -44,7 +50,7 @@ for i in $(seq 0 $((NUM_PROCESSES - 1))); do
     elif [ "$mode" == "gripper" ]; then
         tmux send-keys -t $session_name:$i "python gripper_positions_gemini.py --id $i --splits $NUM_PROCESSES --dataset_name $dataset_name --data_dir $data_dir" C-m
     elif [ "$mode" == "bboxes" ]; then
-        tmux send-keys -t $session_name:$i "python generate_bboxes.py --id $i --splits $NUM_PROCESSES --dataset_name $dataset_name --data_dir $data_dir --gpu ${GPU_LIST[$i]} --visualize" C-m
+        tmux send-keys -t $session_name:$i "CUDA_VISIBLE_DEVICES=${GPU_LIST[$i]} python generate_bboxes.py --id $i --splits $NUM_PROCESSES --dataset_name $dataset_name --data_dir $data_dir --visualize" C-m
     elif [ "$mode" == "descriptions" ]; then
         tmux send-keys -t $session_name:$i "python generate_descriptions.py --id $i --splits $NUM_PROCESSES --dataset_name $dataset_name --data_dir $data_dir --gpu ${GPU_LIST[$i]}" C-m
     elif [ "$mode" == "object_lists" ]; then

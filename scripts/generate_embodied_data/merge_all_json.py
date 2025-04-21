@@ -20,6 +20,8 @@ import argparse
 import os
 import glob
 
+from utils import NumpyFloatValuesEncoder
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--results_path", type=str, required=True)
 args = parser.parse_args()
@@ -27,26 +29,31 @@ args = parser.parse_args()
 results_path = args.results_path
 
 # Find all split reasoning, gripper, and bboxes files
-reasoning_files = glob.glob(os.path.join(results_path, "reasonings", "reasonings*.json"))
+reasoning_files = glob.glob(os.path.join(results_path, "reasonings_gemini", "reasonings*.json"))
 gripper_files = glob.glob(os.path.join(results_path, "gripper_positions", "gripper_positions*.json"))
-bboxes_files = glob.glob(os.path.join(results_path, "bboxes", "results_*.json"))
+bboxes_files = glob.glob(os.path.join(results_path, "bboxes_gdino_base", "results_*.json"))
 
 # If no split files found, use the original file paths
 if not reasoning_files:
-    assert os.path.exists(os.path.join(results_path, "reasonings", "full_reasonings.json")), "Reasoning file not found"
-    reasoning_files = [os.path.join(results_path, "reasonings", "full_reasonings.json")]
+    assert os.path.exists(os.path.join(results_path, "reasonings_gemini", "full_reasonings.json")), "Reasoning file not found"
+    reasoning_files = [os.path.join(results_path, "reasonings_gemini", "full_reasonings.json")]
 if not gripper_files:
     assert os.path.exists(os.path.join(results_path, "gripper_positions", "full_gripper_positions.json")), "Gripper file not found"
     gripper_files = [os.path.join(results_path, "gripper_positions", "full_gripper_positions.json")]
 if not bboxes_files:
-    assert os.path.exists(os.path.join(results_path, "bboxes", "full_bboxes.json")), "Bboxes file not found"
-    bboxes_files = [os.path.join(results_path, "bboxes", "full_bboxes.json")]
+    assert os.path.exists(os.path.join(results_path, "bboxes_gdino_base", "full_bboxes.json")), "Bboxes file not found"
+    bboxes_files = [os.path.join(results_path, "bboxes_gdino_base", "full_bboxes.json")]
 
 print(f"Found {len(reasoning_files)} reasoning files, {len(gripper_files)} gripper files, and {len(bboxes_files)} bboxes files")
+
+with open(os.path.join(results_path, "object_lists_gemini", "full_object_lists.json"), "r") as f:
+    object_list_json = json.load(f)
 
 # Merge reasoning files
 reasoning_count = 0
 reasoning_json = {}
+duplicate_episodes = {}  # Store duplicates for logging
+
 for file_path in reasoning_files:
     print(f"Reading reasoning file: {file_path}")
     with open(file_path, "r") as f:
@@ -54,12 +61,38 @@ for file_path in reasoning_files:
         for file_path_key, episodes in data.items():
             if file_path_key not in reasoning_json:
                 reasoning_json[file_path_key] = {}
+                duplicate_episodes[file_path_key] = {}
+                
             for episode_id_key, episode in episodes.items():
-                assert episode_id_key not in reasoning_json[file_path_key], f"Episode {episode_id_key} already exists in {file_path_key}"
+                # Check for duplicates instead of asserting
+                if episode_id_key in reasoning_json[file_path_key]:
+                    # Log the duplicate
+                    if episode_id_key not in duplicate_episodes[file_path_key]:
+                        duplicate_episodes[file_path_key][episode_id_key] = []
+                    
+                    # Store the previous version before overwriting
+                    duplicate_episodes[file_path_key][episode_id_key].append(
+                        reasoning_json[file_path_key][episode_id_key]
+                    )
+                    print(f"Warning: Episode {episode_id_key} already exists in {file_path_key}. Keeping the latest version.")
+                
+                for step_id, step_data in episode["reasoning"].items():
+                    step_data["relevant_objects"] = ", ".join(object_list_json[file_path_key][episode_id_key]["task_relevant_objects"])
+
+                # Always store the latest version
                 reasoning_json[file_path_key][episode_id_key] = episode
+                
+                # reasoning_json[file_path_key][episode_id_key]["relevant_objects"] = ",".join(object_list_json[file_path_key][episode_id_key]["task_relevant_objects"])
                 reasoning_count += 1
 
 print(f"Merged {reasoning_count} episodes from {len(reasoning_files)} reasoning files")
+
+# Save duplicates to a separate log file
+if any(duplicates for duplicates in duplicate_episodes.values()):
+    duplicate_log_path = os.path.join(results_path, "duplicate_episodes.json")
+    with open(duplicate_log_path, "w") as f:
+        json.dump(duplicate_episodes, f, indent=2, cls=NumpyFloatValuesEncoder if 'NumpyFloatValuesEncoder' in globals() else None)
+    print(f"Saved {sum(len(dups) for dups in duplicate_episodes.values())} duplicated episodes to {duplicate_log_path}")
 
 # Merge gripper files
 gripper_count = 0
@@ -100,11 +133,11 @@ for file_path in bboxes_files:
 print(f"Merged {bboxes_count} episodes from {len(bboxes_files)} bboxes files")
 
 # save merged json
-with open(os.path.join(results_path, "reasonings", "full_reasonings.json"), "w") as f:
+with open(os.path.join(results_path, "reasonings_gemini", "full_reasonings.json"), "w") as f:
     json.dump(reasoning_json, f, indent=4)
 with open(os.path.join(results_path, "gripper_positions", "full_gripper_positions.json"), "w") as f:
     json.dump(gripper_json, f, indent=4)
-with open(os.path.join(results_path, "bboxes", "full_bboxes.json"), "w") as f:
+with open(os.path.join(results_path, "bboxes_gdino_base", "full_bboxes.json"), "w") as f:
     json.dump(bboxes_json, f, indent=4)
 
 no_merged_keys = []

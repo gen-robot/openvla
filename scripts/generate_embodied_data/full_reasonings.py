@@ -361,22 +361,29 @@ Be descriptive but ensure your analysis is consistent with the trajectory data p
 
 ### Provide structured reasoning for the current step
 
-For step {step_idx}, describe the reasoning that determines the correct action. Include:
-- The full task objective
-- The high-level plan for the entire task
-- The current progress
-- Relevant objects for determining the next action
-- The plan for upcoming steps
+For step {step_idx}, the reasoning string should have the following form:
+- Describe the whole task to be completed (not just what remains), and place it inside a {
+break_line}tag <task>. This should be aligned with the language instruction but can be an extended version that provides more detail.
+- Describe the complete high-level plan for completing the task with numbered steps (e.g., "1. Pick up the cup. 2. Move to the table."), {
+break_line}and place it inside a tag <plan>.
+- Describe why the chosen high-level step should be executed now, which features of the current environment influence {
+break_line}that decision, and how it should be done. Place it within a tag <subtask_reason>.
+- Describe the high-level step that should be executed now (one specific step from the numbered plan), and place it {
+break_line}inside a tag <subtask>.
+- Identify and describe the key objects that are relevant for the current subtask, and place them in a list of object {
+break_line}names inside a tag <relevant_objects>.
+- Describe why the chosen movement should be executed now and which features of the current environment influence that {
+break_line}decision. Place it inside a tag <move_reason>.
+- Describe the current primitive movement of the arm that needs to be executed, and place it inside a tag <move>.
 
 Format your reasoning with the following structured tags:
 - <task>Provide a clear, concise description of the complete task the robot needs to accomplish</task>
 - <plan>Outline the full high-level plan for completing the task. Number each step (e.g., "1. Pick up the cup. 2. Move to the table. 3. Place the cup on the table.")</plan>
-- <progress>Describe what has been accomplished so far and what remains to be done</progress>
-- <subtask>Identify the specific high-level step currently being executed</subtask>
 - <subtask_reason>Explain why this particular subtask needs to be executed at this moment and how it fits into the overall plan</subtask_reason>
+- <subtask>Identify the specific high-level step currently being executed</subtask>
 - <relevant_objects>List all objects that are important for the current subtask, separated by commas (e.g., "cup, table, plate")</relevant_objects>
-- <move>Include ONLY the raw move primitive string itself, without any description or additional text. For example: <move>move forward down</move> or <move>close gripper</move>. Important: Do not use "stop" as a movement - this can cause the robot to lock up during execution. If you see a "stop" in the trajectory, interpret it as a pause before the next meaningful action.</move>
 - <move_reason>Provide a detailed analysis of why this specific movement is necessary right now. Consider the robot's current position relative to objects, environmental constraints, and task requirements. Use qualitative descriptions rather than numerical values (e.g., "The gripper needs to move lower to properly grasp the handle" rather than specific coordinates)</move_reason>
+- <move>Include ONLY the raw move primitive string itself, without any description or additional text. For example: <move>move forward down</move> or <move>close gripper</move>. Important: Do not use "stop" as a movement - this can cause the robot to lock up during execution. If you see a "stop" in the trajectory, interpret it as a pause before the next meaningful action.</move>
 
 Your response should be formatted as:
 {step_idx}: "Your full structured reasoning with all tags here"
@@ -431,9 +438,14 @@ class StepByStepGemini:
                     )
                     step_reasoning = response.text
 
-                    # Check if the response is empty or too minimal
-                    if not step_reasoning or len(step_reasoning.strip()) < 20 or not any(tag in step_reasoning for tag in ["<task>", "<move>", "<plan>"]):
-                        raise ValueError(f"Generated reasoning for step {step_idx} is empty or insufficient")
+                    # Check if the response contains all required tags
+                    required_tags = ["<task>", "<plan>", "<subtask>", "<subtask_reason>", "<move>", "<move_reason>", "<relevant_objects>"]
+                    missing_tags = [tag for tag in required_tags if tag not in step_reasoning]
+                    
+                    if not step_reasoning or len(step_reasoning.strip()) < 20 or missing_tags:
+                        error_msg = f"Generated reasoning for step {step_idx} is missing tags: {missing_tags}" if missing_tags else f"Generated reasoning for step {step_idx} is empty or insufficient"
+                        print(error_msg)
+                        raise ValueError(error_msg)
                     
                     # print(f"Step {step_idx} reasoning: {step_reasoning}")
                     
@@ -451,7 +463,7 @@ class StepByStepGemini:
         # Format the output as a dictionary string
         output = "{\n"
         for step_idx, reasoning in step_reasonings.items():
-            cleaned_reasoning = reasoning.replace('\n', ' ').replace('"', '\\"')
+            cleaned_reasoning = reasoning.replace('\n', ' ').replace('"', '')
             output += f'  {step_idx}: "{cleaned_reasoning}",\n'
         output += "}\n\nFINISHED"
         
