@@ -203,11 +203,12 @@ class RLDSDataset(IterableDataset):
         window_size: Optional[int] = None,
         future_action_window_size: Optional[int] = None,
         enable_cot: bool = False,
+        cot_tags: Optional[str] = None,
     ) -> None:
         """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
         self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
         self.enable_cot = enable_cot
-
+        self.cot_tags = cot_tags
         # Configure RLDS Dataset(s)
         if self.data_mix in OXE_NAMED_MIXTURES:
             mixture_spec = OXE_NAMED_MIXTURES[self.data_mix]
@@ -292,7 +293,7 @@ class RLDSDataset(IterableDataset):
         self.dataset, self.dataset_length, self.dataset_statistics = self.make_dataset(rlds_config)
 
     def make_dataset(self, rlds_config):
-        return make_interleaved_dataset(**rlds_config, enable_cot=self.enable_cot)
+        return make_interleaved_dataset(**rlds_config, enable_cot=self.enable_cot, cot_tags=self.cot_tags)
 
     def __iter__(self) -> Dict[str, Any]:
         for rlds_batch in self.dataset.as_numpy_iterator():
@@ -319,6 +320,7 @@ class EpisodicRLDSDataset(RLDSDataset):
             traj_transform_kwargs=rlds_config["traj_transform_kwargs"],
             frame_transform_kwargs=rlds_config["frame_transform_kwargs"],
             enable_cot=self.enable_cot,
+            cot_tags=self.cot_tags,
         )
 
     def __iter__(self) -> Dict[str, Any]:

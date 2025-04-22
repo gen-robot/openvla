@@ -78,8 +78,12 @@ def get_cot_database_keys():
         CotTag.ACTION.value: "action",
     }
 
+def get_inverse_cot_database_keys():
+    forward_map = get_cot_database_keys()
+    return {v: k for k, v in forward_map.items()}
 
-def make_tf_hash_table(raw_dict):
+
+def make_tf_hash_table(raw_dict, cot_tags=None):
     print("Building the reasoning dict...")
     keys = []
     values = []
@@ -88,6 +92,14 @@ def make_tf_hash_table(raw_dict):
         tags = get_cot_tags_list()[:-1]  # exclude ACTION
         database_keys = get_cot_database_keys()
         # reasoning_parts = [(tag, d[database_keys[tag]]) for tag in tags if database_keys[tag] in d.keys()] #
+
+        if cot_tags is not None:
+            included_tags = cot_tags.split(",")
+            inverse_database_keys = get_inverse_cot_database_keys()
+            tags = [inverse_database_keys[t] for t in included_tags if t in inverse_database_keys.keys()]
+            if len(tags) < len(included_tags):
+                print(f"Warning: Some tags in {cot_tags} were not found in the CoT tags list.")
+                import pdb; pdb.set_trace()
 
         reasoning_parts = []
         for tag in tags:
@@ -114,7 +126,7 @@ def make_tf_hash_table(raw_dict):
                 keys.append(file_name + "_" + str(episode_id) + "_" + i)
                 reasoning_dict = raw_dict[file_name][episode_id]["reasoning"][i]
 
-                control_freq = 20
+                control_freq = 20 # FIXME: this is hardcoded for libero dataset
                 gripper_lookahead_n = 5  # list this many future positions of the gripper
                 jump_n = int(control_freq / gripper_lookahead_n)
                 trajectory_features = raw_dict[file_name][episode_id]["features"]

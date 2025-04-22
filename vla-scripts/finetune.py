@@ -77,6 +77,8 @@ class FinetuneConfig:
     num_actions_chunk: Optional[int] = None          # If provided, uses a action chunk of this size to chunk the future actions
     # future_action_window_size: Optional[int] = None  # If provided, uses a future action window of this size to chunk the future actions
 
+    cot_tags: Optional[str] = None                   # If provided, constructs a CoT label with these tags, separated by commas, otherwise uses all tags
+
     # Dataset
     data_root_dir: Path = Path("datasets/rlds")      # Directory containing RLDS datasets
     dataset_name: str = "aloha_scoop_x_into_bowl"    # Name of fine-tuning dataset (e.g., `aloha_scoop_x_into_bowl`)
@@ -205,6 +207,9 @@ def get_run_id(cfg) -> str:
             run_id += "+pd"
         if cfg.enable_cot:
             run_id += "+cot"
+        if cfg.cot_tags is not None:
+            abb_cot_tags = '-'.join([''.join([tt[0] for tt in t.split('_')]) for t in cfg.cot_tags.split(',')])
+            run_id += f"-{abb_cot_tags}"
     return run_id
 
 
@@ -1115,6 +1120,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         window_size=cfg.window_size,
         future_action_window_size=cfg.future_action_window_size,
         enable_cot=cfg.enable_cot,
+        cot_tags=cfg.cot_tags,
     )
     if cfg.use_val_set:
         val_dataset = RLDSDataset(
@@ -1128,6 +1134,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             window_size=cfg.window_size,
             future_action_window_size=cfg.future_action_window_size,
             enable_cot=cfg.enable_cot,
+            cot_tags=cfg.cot_tags,
         )
 
     # [Important] Save dataset statistics so that we can unnormalize actions during inference

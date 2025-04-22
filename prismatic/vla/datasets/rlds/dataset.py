@@ -63,6 +63,7 @@ def make_dataset_from_rlds(
     enable_cot: bool = False,
     # reasoning_dataset_path: str = f"{os.environ['HOME']}/.cache/reasonings_dataset.json",
     reasoning_dataset_dir: str = None,
+    cot_tags: Optional[str] = None,
     **kwargs,
 ) -> Tuple[dl.DLataset, dict]:
     """
@@ -166,7 +167,7 @@ def make_dataset_from_rlds(
         with open(reasoning_dataset_path, "r") as f:
             reasoning_dataset = json.load(f)
 
-        reasoning_dataset = make_tf_hash_table(reasoning_dataset)
+        reasoning_dataset = make_tf_hash_table(reasoning_dataset, cot_tags=cot_tags)
     else:
         reasoning_dataset = None
 
@@ -503,6 +504,7 @@ def make_single_dataset(
     traj_transform_kwargs: dict = {},
     frame_transform_kwargs: dict = {},
     enable_cot: bool = False,
+    cot_tags: Optional[str] = None,
 ) -> dl.DLataset:
     """Creates a single dataset from kwargs. Returns a dataset of trajectories.
 
@@ -542,6 +544,7 @@ def make_interleaved_dataset(
     traj_read_threads: Optional[int] = None,
     enable_cot: bool = False,
     max_action_dim: Optional[int] = None,
+    cot_tags: Optional[str] = None,
 ) -> dl.DLataset:
     """
     Creates an interleaved dataset from list of dataset configs (kwargs). Returns a dataset of batched frames.
@@ -628,6 +631,7 @@ def make_interleaved_dataset(
             num_parallel_reads=reads,
             dataset_statistics=all_dataset_statistics[dataset_kwargs["name"]],
             enable_cot=enable_cot,
+            cot_tags=cot_tags,
         )
         dataset = apply_trajectory_transforms(
             dataset.repeat(),

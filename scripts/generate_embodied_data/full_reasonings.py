@@ -27,6 +27,10 @@ Your analysis should be thorough, precise, and grounded in the observable data.
 Focus on explaining the robot's decision-making process based on its current state, 
 the task requirements, and the physical environment.
 
+IMPORTANT: In your responses, do not reference the internal feature names such as 
+state_3d, euler, gripper_openness, or move_primitive. Instead, use natural language 
+descriptions of the robot's position, orientation, gripper state, and movements.
+
 Format your response according to the tags requested in the prompt.
 """
 
@@ -263,7 +267,7 @@ def build_step_prompt(features, step_idx, window_size, language_instruction, cap
     # Calculate window boundaries
     total_steps = len(features["move_primitive"])
     start_idx = max(0, step_idx - window_size)
-    end_idx = min(total_steps, step_idx + window_size + 1)
+    end_idx = min(total_steps, step_idx + window_size + 1)  # Include context after the current step
     
     # Create a subset of features for the window
     windowed_features = {key: features[key][start_idx:end_idx] for key in features if key in ["move_primitive", "state_3d", "euler", "gripper_openness"]}
@@ -334,7 +338,7 @@ The following objects are relevant for this task: [{task_objects_str}]
 
 You're focusing on step {step_idx} of a robot trajectory (marked as CURRENT STEP in the data below). The robot is executing a task specified by the instruction: "{language_instruction}". 
 
-I've provided a window of context showing steps before and after the current step to help you understand the sequence of actions.
+I've provided a window of context including some steps before and after the current step to help you understand the full sequence. You can use this FULL CONTEXT to understand the trajectory, but your reasoning must be written as if you only have access to the CURRENT AND PREVIOUS information.
 
 ```python
 trajectory_window = {structured_features}
@@ -344,53 +348,51 @@ trajectory_window = {structured_features}
 
 {caption}{task_objects_section}## Your objective
 
-I want you to analyze ONLY THE CURRENT STEP (step {step_idx}) with detailed reasoning. Focus on explaining:
-1. What action is being taken at this specific step
-2. Why this action makes sense in the context of the overall task
-3. How this step relates to previous and upcoming steps
+I want you to analyze the current step {step_idx} with detailed reasoning. 
+
+IMPORTANT REQUIREMENT: While you have access to the full trajectory data (including future steps) to understand the complete context, your reasoning output MUST be written as if you only have access to the current observation and past information. The model that will be trained on your output will NOT have access to future states during inference.
+
+Focus on explaining:
+1. What action should be executed at the current step based on what's currently observable
+2. Why this action makes sense in the context of the overall task given the current state
+3. How this specific movement contributes to completing the task
 
 ### Analyze the current step in the context of the full task
 
-Start by briefly describing the overall task. Then focus specifically on the current step {step_idx}, explaining:
-- What is the robot trying to accomplish at this moment?
-- How does this specific action contribute to the overall task?
-- What objects or environmental features are influencing this action?
-- Why is this particular primitive movement appropriate now?
-
-Be descriptive but ensure your analysis is consistent with the trajectory data provided in the window.
+First, describe the overall task based on the language instruction and visual scene. Then focus specifically on step {step_idx}, explaining what the robot is trying to accomplish at this moment and why this particular primitive movement makes sense given what the robot can observe right now.
 
 ### Provide structured reasoning for the current step
 
 For step {step_idx}, the reasoning string should have the following form:
-- Describe the whole task to be completed (not just what remains), and place it inside a {
-break_line}tag <task>. This should be aligned with the language instruction but can be an extended version that provides more detail.
-- Describe the complete high-level plan for completing the task with numbered steps (e.g., "1. Pick up the cup. 2. Move to the table."), {
-break_line}and place it inside a tag <plan>.
-- Describe why the chosen high-level step should be executed now, which features of the current environment influence {
-break_line}that decision, and how it should be done. Place it within a tag <subtask_reason>.
-- Describe the high-level step that should be executed now (one specific step from the numbered plan), and place it {
-break_line}inside a tag <subtask>.
-- Identify and describe the key objects that are relevant for the current subtask, and place them in a list of object {
-break_line}names inside a tag <relevant_objects>.
-- Describe why the chosen movement should be executed now and which features of the current environment influence that {
-break_line}decision. Place it inside a tag <move_reason>.
-- Describe the current primitive movement of the arm that needs to be executed, and place it inside a tag <move>.
+- Describe the complete task to be accomplished and place it inside a <task> tag
+- Describe the full high-level plan with numbered steps and place it inside a <plan> tag
+- Explain why a specific high-level step should be executed now based on what can be observed at the current moment (place within <subtask_reason> tag)
+- Identify the specific high-level step that should be executed now and place it inside a <subtask> tag
+- List the objects relevant to the current subtask as visible in the current image (place in <relevant_objects> tag)
+- Explain why a specific movement makes sense right now based ONLY on what can be observed at the current moment (place in <move_reason> tag)
+- Include ONLY the raw move primitive string inside the <move> tag
+
+CRITICAL: Your reasoning in the <subtask_reason> and <move_reason> tags MUST NOT reference future states or outcomes. It should be written as if you only have access to the current observation and state information. This is essential because the model being trained won't have access to future information during deployment.
 
 Format your reasoning with the following structured tags:
-- <task>Provide a clear, concise description of the complete task the robot needs to accomplish</task>
-- <plan>Outline the full high-level plan for completing the task. Number each step (e.g., "1. Pick up the cup. 2. Move to the table. 3. Place the cup on the table.")</plan>
-- <subtask_reason>Explain why this particular subtask needs to be executed at this moment and how it fits into the overall plan</subtask_reason>
-- <subtask>Identify the specific high-level step currently being executed</subtask>
-- <relevant_objects>List all objects that are important for the current subtask, separated by commas (e.g., "cup, table, plate")</relevant_objects>
-- <move_reason>Provide a detailed analysis of why this specific movement is necessary right now. Consider the robot's current position relative to objects, environmental constraints, and task requirements. Use qualitative descriptions rather than numerical values (e.g., "The gripper needs to move lower to properly grasp the handle" rather than specific coordinates)</move_reason>
-- <move>Include ONLY the raw move primitive string itself, without any description or additional text. For example: <move>move forward down</move> or <move>close gripper</move>. Important: Do not use "stop" as a movement - this can cause the robot to lock up during execution. If you see a "stop" in the trajectory, interpret it as a pause before the next meaningful action.</move>
+- <task>Complete task description</task>
+- <plan>Numbered high-level plan (e.g., "1. Approach the cup. 2. Grasp the cup. 3. Lift the cup.")</plan>
+- <subtask_reason>Explanation of why a specific subtask needs to be executed now based on current observations</subtask_reason>
+- <subtask>Current high-level step being executed</subtask>
+- <relevant_objects>List of objects important for the current subtask (comma-separated)</relevant_objects>
+- <move_reason>Explanation of why a specific movement is appropriate based on current observations only</move_reason>
+- <move>Raw move primitive string only</move>
+
+IMPORTANT: In your explanations, do not reference the internal feature names (state_3d, euler, gripper_openness, move_primitive). 
+Instead, use natural language to describe the robot's position, orientation, gripper state, and movements. For example, 
+say "The robot arm is positioned above the cup" rather than "The state_3d value shows the arm is above the cup."
 
 Your response should be formatted as:
 {step_idx}: "Your full structured reasoning with all tags here"
 
 ## Task summary
 
-Focus only on analyzing step {step_idx} with detailed reasoning that explains what the robot is doing, why it's doing it, and how this specific action contributes to the overall task.
+Your key responsibility is to generate reasoning that explains the robot's actions in a way that ONLY uses information available at the current moment - as if you cannot see the future steps.
 """
 
 
@@ -632,7 +634,7 @@ def generate_reasonings(builder, episode_indexes, captions_dict, save_path="reas
         print("computed reasoning:", entry)
 
         with open(save_path, "w") as out_f:
-            json.dump(jsonify(reasonings), out_f)
+            json.dump(jsonify(reasonings), out_f, indent=2)
 
 
 
