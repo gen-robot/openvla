@@ -7,6 +7,8 @@ Core interface script for configuring and initializing RLDS datasets.
 import copy
 import inspect
 import json
+import os
+import shutil
 from functools import partial
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
@@ -14,8 +16,13 @@ import dlimp as dl
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
+from huggingface_hub import hf_hub_download
 
 from prismatic.overwatch import initialize_overwatch
+from prismatic.vla.constants import (
+    ACTION_PROPRIO_NORMALIZATION_TYPE,
+)
+from prismatic.util.cot_utils import make_tf_hash_table
 from prismatic.vla.datasets.rlds import obs_transforms, traj_transforms
 from prismatic.vla.datasets.rlds.utils import goal_relabeling, task_augmentation
 from prismatic.vla.datasets.rlds.utils.data_utils import (
@@ -47,12 +54,16 @@ def make_dataset_from_rlds(
     depth_obs_keys: Dict[str, Optional[str]] = {},
     state_obs_keys: List[Optional[str]] = (),
     language_key: Optional[str] = None,
-    action_proprio_normalization_type: NormalizationType = NormalizationType.NORMAL,
+    action_proprio_normalization_type: NormalizationType = ACTION_PROPRIO_NORMALIZATION_TYPE,
     dataset_statistics: Optional[Union[dict, str]] = None,
     absolute_action_mask: Optional[List[bool]] = None,
     action_normalization_mask: Optional[List[bool]] = None,
     num_parallel_reads: int = tf.data.AUTOTUNE,
     num_parallel_calls: int = tf.data.AUTOTUNE,
+    enable_cot: bool = False,
+    # reasoning_dataset_path: str = f"{os.environ['HOME']}/.cache/reasonings_dataset.json",
+    reasoning_dataset_dir: str = None,
+    **kwargs,
 ) -> Tuple[dl.DLataset, dict]:
     """
     This function is responsible for loading a specific RLDS dataset from storage and getting it into a standardized
@@ -128,7 +139,38 @@ def make_dataset_from_rlds(
     if language_key is not None:
         REQUIRED_KEYS.add(language_key)
 
-    def restructure(traj):
+    load_cot_labels = enable_cot and (
+        ('bridge' in name) or ('libero' in name)
+    )
+
+    if load_cot_labels:
+        if reasoning_dataset_dir is None:
+            reasoning_dataset_dir = f"{os.path.dirname(__file__)}/../../../../datasets/reasonings"
+            print("reasoning_dataset_dir: ", os.path.abspath(reasoning_dataset_dir))
+        reasoning_dataset_path = os.path.join(reasoning_dataset_dir, f"{name}.json")
+        assert os.path.isfile(reasoning_dataset_path), f"Reasoning dataset for {name} is not found in {reasoning_dataset_dir}"
+
+        # if os.path.isfile(reasoning_dataset_path):
+        #     print(f"Loading from local checkpoint path `{reasoning_dataset_path}`.")
+        # else:
+        #     print(f"Dataset file `{reasoning_dataset_path}` not found, loading from HF.")
+
+        #     download_path = hf_hub_download(
+        #         repo_id="Embodied-CoT/embodied_features_bridge",
+        #         filename="embodied_features_bridge.json",
+        #         repo_type="dataset",
+        #     )
+
+        #     shutil.copyfile(download_path, reasoning_dataset_path)
+
+        with open(reasoning_dataset_path, "r") as f:
+            reasoning_dataset = json.load(f)
+
+        reasoning_dataset = make_tf_hash_table(reasoning_dataset)
+    else:
+        reasoning_dataset = None
+
+    def restructure(traj, load_cot_labels=False):
         # apply a standardization function, if provided
         if standardize_fn is not None:
             traj = standardize_fn(traj)
@@ -179,12 +221,37 @@ def make_dataset_from_rlds(
                 )
             task["language_instruction"] = traj.pop(language_key)
 
+        reasonings = tf.repeat("", traj_len)
+        metadata_dict = dict()
+        if 'episode_id' in traj["traj_metadata"].get("episode_metadata", {}).keys():
+            file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
+            episode_id = traj["traj_metadata"]["episode_metadata"]["episode_id"][0]
+            # tf.print("file_name: ", file_name)
+            # tf.print("episode_id: ", episode_id)
+            file_names = tf.repeat(file_name, traj_len)
+            episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
+            if load_cot_labels:
+                indices = tf.as_string(tf.range(traj_len))
+                lookup_keys = file_names + "_" + episode_ids + "_" + indices
+                # tf.print("lookup_keys: ", lookup_keys[0])
+                reasonings = reasoning_dataset.lookup(lookup_keys)
+                # tf.print("lookup_keys: ", lookup_keys[0], "reasonings: ", reasonings[0], "file_names: ", file_names[0], "episode_ids: ", episode_ids[0], "indices: ", indices[0])
+
+                metadata_dict = {
+                    "file_name": tf.repeat(file_name, traj_len),
+                    "episode_id": tf.repeat(episode_id, traj_len),
+                    "traj_len": tf.repeat(traj_len, traj_len),
+                }
+
         traj = {
             "observation": new_obs,
             "task": task,
             "action": tf.cast(traj["action"], tf.float32),
             "dataset_name": tf.repeat(name, traj_len),
+            **metadata_dict,
         }
+        if enable_cot:
+            traj["reasoning"] = reasonings
 
         if absolute_action_mask is not None:
             if len(absolute_action_mask) != traj["action"].shape[-1]:
@@ -208,7 +275,9 @@ def make_dataset_from_rlds(
     elif dataset_statistics is None:
         full_dataset = dl.DLataset.from_rlds(
             builder, split="all", shuffle=False, num_parallel_reads=num_parallel_reads
-        ).traj_map(restructure, num_parallel_calls)
+        ).traj_map(
+            partial(restructure, load_cot_labels=load_cot_labels), 
+            num_parallel_calls)
         # tries to load from cache, otherwise computes on the fly
         dataset_statistics = get_dataset_statistics(
             full_dataset,
@@ -238,7 +307,10 @@ def make_dataset_from_rlds(
 
     dataset = dl.DLataset.from_rlds(builder, split=split, shuffle=shuffle, num_parallel_reads=num_parallel_reads)
 
-    dataset = dataset.traj_map(restructure, num_parallel_calls)
+    dataset = dataset.traj_map(
+        partial(restructure, load_cot_labels=load_cot_labels),
+        num_parallel_calls,
+    )
     dataset = dataset.traj_map(
         partial(
             normalize_action_and_proprio,
@@ -430,6 +502,7 @@ def make_single_dataset(
     train: bool,
     traj_transform_kwargs: dict = {},
     frame_transform_kwargs: dict = {},
+    enable_cot: bool = False,
 ) -> dl.DLataset:
     """Creates a single dataset from kwargs. Returns a dataset of trajectories.
 
@@ -442,6 +515,7 @@ def make_single_dataset(
     dataset, dataset_statistics = make_dataset_from_rlds(
         **dataset_kwargs,
         train=train,
+        enable_cot=enable_cot,
     )
     dataset = apply_trajectory_transforms(dataset, **traj_transform_kwargs, train=train)
     dataset = apply_frame_transforms(dataset, **frame_transform_kwargs, train=train)
@@ -466,6 +540,8 @@ def make_interleaved_dataset(
     balance_weights: bool = False,
     traj_transform_threads: Optional[int] = None,
     traj_read_threads: Optional[int] = None,
+    enable_cot: bool = False,
+    max_action_dim: Optional[int] = None,
 ) -> dl.DLataset:
     """
     Creates an interleaved dataset from list of dataset configs (kwargs). Returns a dataset of batched frames.
@@ -519,11 +595,12 @@ def make_interleaved_dataset(
     if balance_weights:
         sample_weights = np.array(sample_weights) * np.array(dataset_sizes)
     sample_weights = np.array(sample_weights) / np.sum(sample_weights)
-    pprint_data_mixture(dataset_kwargs_list, sample_weights)
+    pprint_data_mixture(dataset_kwargs_list, sample_weights, dataset_sizes)
 
     # Effective Dataset Length = Number of samples until each dataset has completed at least one epoch
     #   =>> Note :: Only counting the "primary" datasets (i.e., datasets with sample_weight == 1.0)
     dataset_len = int((np.array(dataset_sizes) / sample_weights)[primary_dataset_indices].max())
+    print(f"Effective Dataset Length: {dataset_len}")
 
     # Allocate Threads based on Weights
     threads_per_dataset = allocate_threads(traj_transform_threads, sample_weights)
@@ -551,6 +628,7 @@ def make_interleaved_dataset(
             num_parallel_calls=threads,
             num_parallel_reads=reads,
             dataset_statistics=all_dataset_statistics[dataset_kwargs["name"]],
+            enable_cot=enable_cot,
         )
         dataset = apply_trajectory_transforms(
             dataset.repeat() if train else dataset,
@@ -566,11 +644,13 @@ def make_interleaved_dataset(
 
     # Validation =>> fix a single shuffle buffer of data and cache it in RAM; prevents gradual memory increase!
     if not train:
-        dataset = dataset.take(shuffle_buffer_size).cache()
+        if shuffle_buffer_size > 0:
+            dataset = dataset.take(shuffle_buffer_size).cache()
 
     # Shuffle the Dataset
     #   =>> IMPORTANT :: Shuffle AFTER .cache(), or else memory will still leak!
-    dataset = dataset.shuffle(shuffle_buffer_size)
+    if shuffle_buffer_size > 0:
+        dataset = dataset.shuffle(shuffle_buffer_size)
 
     # Apply Frame Transforms
     overwatch.info("Applying frame transforms on dataset...")

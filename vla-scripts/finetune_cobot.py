@@ -40,6 +40,7 @@ from transformers import AutoConfig, AutoImageProcessor
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 import wandb
+import psutil
 from prismatic.models.backbones.llm.prompting import PurePromptBuilder, VicunaV15ChatPromptBuilder
 from prismatic.util.data_utils import PaddedCollatorForActionPrediction
 from prismatic.vla.action_tokenizer import ActionTokenizer
@@ -122,6 +123,27 @@ class FinetuneConfig:
 
     # fmt: on
 
+
+def log_system_memory(step):
+    cpu_mem = psutil.virtual_memory()
+    cpu_used = cpu_mem.used / (1024 ** 3)
+    cpu_total = cpu_mem.total / (1024 ** 3)
+    wandb.log({
+        "sys/cpu_used": cpu_used,
+        "sys/cpu_total": cpu_total,
+    }, step=step)
+    # print(f"[CPU] Used: {cpu_used:.2f} GB / Total: {cpu_total:.2f} GB")
+
+    if torch.cuda.is_available():
+        gpu_allocated = torch.cuda.memory_allocated() / (1024 ** 3)
+        gpu_reserved = torch.cuda.memory_reserved() / (1024 ** 3)
+        wandb.log({
+            "sys/gpu_allocated": gpu_allocated,
+            "sys/gpu_reserved": gpu_reserved,
+        }, step=step)
+        # print(f"[GPU] Allocated: {gpu_allocated:.2f} GB, Reserved: {gpu_reserved:.2f} GB")
+    else:
+        print("[GPU] CUDA unavailable.")
 
 @draccus.wrap()
 def finetune(cfg: FinetuneConfig) -> None:
@@ -323,6 +345,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                     },
                     step=gradient_step_idx,
                 )
+                log_system_memory(gradient_step_idx)
 
             # Optimizer Step
             if (batch_idx + 1) % cfg.grad_accumulation_steps == 0:

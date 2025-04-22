@@ -1,4 +1,6 @@
-openvla
+**/**/outputs*
+logs
+openvla*
 datasets
 checkpoints
 
@@ -155,3 +157,5 @@ data/
 # Rollout videos and wandb logs
 rollouts/
 wandb/
+
+nohup.out

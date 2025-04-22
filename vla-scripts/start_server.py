@@ -55,11 +55,8 @@ SYSTEM_PROMPT = (
 )
 
 
-def get_openvla_prompt(instruction: str, openvla_path: Union[str, Path]) -> str:
-    if "v01" in openvla_path:
-        return f"{SYSTEM_PROMPT} USER: What action should the robot take to {instruction.lower()}? ASSISTANT:"
-    else:
-        return f"In: What action should the robot take to {instruction.lower()}?\nOut:"
+def get_openvla_prompt(instruction: str) -> str:
+    return f"In: What action should the robot take to {instruction.lower()}?\nOut:"
 
 
 # === Server Interface ===
@@ -100,7 +97,7 @@ class OpenVLAServer:
             unnorm_key = payload.get("unnorm_key", None)
 
             # Run VLA Inference
-            prompt = get_openvla_prompt(instruction, self.openvla_path)
+            prompt = get_openvla_prompt(instruction)
             inputs = self.processor(prompt, Image.fromarray(image).convert("RGB")).to(self.device, dtype=torch.bfloat16)
             action = self.vla.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False)
             if double_encode:
