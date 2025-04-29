@@ -5,6 +5,39 @@ import glob
 import numpy as np
 import tensorflow_datasets as tfds
 
+import numpy as np
+
+
+def filter_small_actions(actions, pos_thresh=0.01, rot_thresh=0.06, check_gripper=True):
+    actions = np.asarray(actions)
+    N = actions.shape[0]
+    valid_mask = np.zeros(N, dtype=bool)
+
+    for i in range(N):
+        act = actions[i]
+        delta_xyz = act[:3]
+        delta_euler = act[3:6]
+        gripper = act[6]
+
+        pos_movement = np.linalg.norm(delta_xyz)
+        rot_movement = np.linalg.norm(delta_euler)
+
+        if pos_thresh is None and rot_thresh is None:
+            is_valid = True
+        elif pos_thresh is None:
+            is_valid = (rot_movement > rot_thresh)
+        elif rot_thresh is None:
+            is_valid = (pos_movement > pos_thresh)
+        else:
+            is_valid = (pos_movement > pos_thresh) or (rot_movement > rot_thresh)
+
+        # Preserve gripper toggle events (e.g., from -1 to 1 or vice versa)
+        if check_gripper and i > 0 and actions[i - 1][6] != gripper:
+            is_valid = True
+
+        valid_mask[i] = is_valid
+
+    return valid_mask
 
 class ExampleDataset(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for example dataset."""
@@ -16,12 +49,11 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.path = "../../../SimplerEnv/videos/collect"
         self.tasks = [
-            # "octo-small_PutSpoonOnTableClothInScene-v1",
-            "octo-small_PutCarrotOnPlateInScene-v1",
-            # "octo-small_StackGreenCubeOnYellowCubeBakedTexInScene-v1",
-            # "octo-small_PutEggplantInBasketScene-v1",
+            {"name": "../../../SimplerEnv/videos/collect/octo-small_PutCarrotOnPlateInScene-v1",
+             "bug": True, "filter": False},
+            {"name": "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Carrot-v1/20250421_195812/data",
+             "bug": False, "filter": True},
         ]
 
     def _info(self) -> tfds.core.DatasetInfo:
@@ -57,19 +89,37 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
     def _generate_examples(self, num_ep, spare=0, start=0) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
 
-        def _parse_example(episode_path):
+        def _parse_example(episode_path, has_bug, use_filter):
             data = np.load(episode_path, allow_pickle=True).tolist()
+
+            # prepare data
+            ins = data['instruction']
+            ins = ins.tolist()[0] if isinstance(ins, np.ndarray) else ins
+            actions = data["action"]
+            images = np.asarray([np.asarray(img) for img in data["image"]])
+
+            if has_bug:
+                actions = actions[1:]
+                images = images[:-1]
+
+            if use_filter:
+                mask = filter_small_actions(data["action"])
+                actions = actions[mask]
+                images = images[mask]
+                num_filtered = mask.shape[0] - mask.sum()
+                print(f"Filtered {num_filtered}/{mask.shape[0]} actions")
+            else:
+                num_filtered = 0
 
             episode = []
             success_count = 0
-            for i in range(1, len(data["action"])):
-
+            for i in range(len(actions)):
                 episode.append({
                     'observation': {
-                        'image': np.asarray(data["image"][i - 1]), # bug: hack
+                        'image': images[i],
                     },
-                    'action': data["action"][i],
-                    'language_instruction': data['instruction'],
+                    'action': actions[i],
+                    'language_instruction': ins,
                 })
 
                 if data["info"][i]["success"]:
@@ -88,24 +138,33 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
                 }
             }
 
-            return sample
+            return sample, num_filtered
 
         all_files = []
         for task in self.tasks:
-            path = Path(self.path) / task
+            path = Path(task["name"])
+            has_bug = task["bug"]
+            filter = task["filter"]
+
             files = sorted(glob.glob(str(path / "*.npy")))
             if spare > 0:
                 files = files[:-spare]
             if start > 0:
                 start = min(start, len(files) - num_ep)
             files = files[start:start + num_ep]
+            assert len(files) == num_ep
 
             print(f"{task}: {len(files)}")
 
-            all_files.extend(files)
+            all_files.extend([(f, has_bug, filter) for f in files])
 
+        num_filtered_total = 0
         for idx, ep_path in enumerate(all_files):
-            sample = _parse_example(ep_path)
-            yield ep_path, sample
+            sample, num_filtered = _parse_example(*ep_path)
+            num_filtered_total += num_filtered
+            yield ep_path[0], sample
 
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_sft_dataset_pc73
+        print(f"Total filtered {num_filtered_total} actions")
+
+# tfds build --overwrite
+# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/spc148f
