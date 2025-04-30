@@ -66,11 +66,39 @@ def compute_token_accuracy(predicted_token_ids, ground_truth_token_ids, mask):
     accuracy = correct_preds.sum().float() / mask.sum().float()
     return accuracy
 
+def compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids, mask):
+    if predicted_action_token_ids.shape[1] != ground_truth_token_ids[mask].shape[1]:
+        print("Error: Shape not match!")
+        return torch.tensor(0)
+    correct_preds = (predicted_token_ids == ground_truth_token_ids[mask])
+    accuracy = correct_preds.sum().float() / mask.sum().float()
+    return accuracy
+
+
+def compute_token_accuracy_abs(predicted_token_ids, ground_truth_token_ids, mask):
+    total_token = mask.sum().float()
+    if predicted_token_ids.shape[1] > ground_truth_token_ids.shape[1]:
+        predicted_token_ids = predicted_token_ids[:, :ground_truth_token_ids.shape[1]]
+    elif predicted_token_ids.shape[1] < ground_truth_token_ids.shape[1]:
+        ground_truth_token_ids = ground_truth_token_ids[:, :predicted_token_ids.shape[1]]
+        mask = mask[:, :predicted_token_ids.shape[1]]
+    
+    correct_preds = (predicted_token_ids == ground_truth_token_ids) & mask
+    accuracy = correct_preds.sum().float() / total_token
+    return accuracy
+
 
 def compute_actions_l1_loss(action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask):
     pred_continuous_actions = torch.tensor(
         action_tokenizer.decode_token_ids_to_actions(predicted_token_ids[mask].cpu().numpy())
     )
+    true_continuous_actions = torch.tensor(
+        action_tokenizer.decode_token_ids_to_actions(ground_truth_token_ids[mask].cpu().numpy())
+    )
+    l1_loss = torch.nn.functional.l1_loss(pred_continuous_actions, true_continuous_actions)
+    return l1_loss
+
+def compute_actions_l1_loss_from_action(action_tokenizer, pred_continuous_actions, ground_truth_token_ids, mask):
     true_continuous_actions = torch.tensor(
         action_tokenizer.decode_token_ids_to_actions(ground_truth_token_ids[mask].cpu().numpy())
     )

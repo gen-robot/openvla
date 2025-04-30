@@ -39,9 +39,9 @@ class CotTag(enum.Enum):
     RELEVANT_OBJECTS = "RELEVANT OBJECTS:"
     SUBTASK_REASONING = "SUBTASK REASONING:"
     SUBTASK = "SUBTASK:"
-    GRIPPER_POSITION = "GRIPPER POSITION:"
     MOVE_REASONING = "MOVE REASONING:"
     MOVE = "MOVE:"
+    GRIPPER_POSITION = "GRIPPER POSITION:"
     ACTION = "ACTION:"
 
 
@@ -54,12 +54,12 @@ def get_cot_tags_list():
         CotTag.TASK.value,
         CotTag.PLAN.value,
         CotTag.VISIBLE_OBJECTS.value,
-        CotTag.RELEVANT_OBJECTS.value,
+        # CotTag.RELEVANT_OBJECTS.value,
         CotTag.SUBTASK_REASONING.value,
         CotTag.SUBTASK.value,
-        CotTag.GRIPPER_POSITION.value,
         CotTag.MOVE_REASONING.value,
         CotTag.MOVE.value,
+        CotTag.GRIPPER_POSITION.value,
         CotTag.ACTION.value,
     ]
 
@@ -212,17 +212,25 @@ def get_cot_masks(tokens, tags, llm_tokenizer):
     return tag_masks
 
 
-def compute_cot_accuracy(predicted_token_ids, ground_truth_token_ids, llm_tokenizer):
+def compute_cot_accuracy(predicted_token_ids, ground_truth_token_ids, llm_tokenizer, log_dir=None, step=None, batch_idx=None, is_main_process=True, mode="train"):
     """
     Compute the accuracy for each CoT tag.
     Args:
         predicted_token_ids: tensor of shape (batch_size, #tokens)
         ground_truth_token_ids: tensor of shape (batch_size, #tokens)
         llm_tokenizer: tokenizer, by default it's the LlamaTokenizerFast
+        log_dir: directory to save text logs (optional)
+        step: current training step (for logging)
+        batch_idx: current batch index (for logging)
+        is_main_process: whether this is the main process (to avoid duplicate logs in distributed training)
+        mode: either "train" or "val" to distinguish between training and validation
     Returns:
         metrics: dictionary of accuracy for each tag
     """
-    tags = get_cot_tags_list()[:-1]  # exclude ACTION
+    # Ensure mode is either "train" or "val"
+    assert mode in ["train", "val"], "Mode must be either 'train' or 'val'"
+    
+    tags = get_cot_tags_list()  # exclude ACTION
     metrics = {}
     
     def get_batched_masks(tokens, tags):
@@ -241,10 +249,109 @@ def compute_cot_accuracy(predicted_token_ids, ground_truth_token_ids, llm_tokeni
     final_pred_masks = get_batched_masks(predicted_token_ids, tags)
     final_gt_masks = get_batched_masks(ground_truth_token_ids, tags)
 
+    # Calculate accuracy for each tag
+    total_correct = 0
+    total_tokens = 0
+    tag_accuracies = {}
+    
+    # Set up text logging if log_dir is provided and this is the main process
+    text_log_file = None
+    if log_dir is not None and is_main_process:
+        import os
+        # Log less frequently to avoid too many files
+        should_log = (step is None or batch_idx is None or 
+                      (step % 1 == 0 and batch_idx < 3))
+        
+        if should_log:
+            os.makedirs(log_dir, exist_ok=True)
+            # Use a separate log file for training and validation
+            log_file_path = os.path.join(log_dir, f"cot_tag_analysis_{mode}.txt")
+            text_log_file = open(log_file_path, "a")
+            text_log_file.write(f"\n\n===== CoT Tag Outputs ({mode.upper()}, Step {step}, Batch {batch_idx}) =====\n\n")
+            
+            # Log full decoded text - decode each example in the batch separately
+            text_log_file.write("===== FULL DECODED TEXT =====\n")
+            # Decode one example at a time to avoid the list issue
+            for i in range(min(3, len(predicted_token_ids))):
+                # Sanitize token IDs to prevent overflow errors
+                pred_tokens = predicted_token_ids[i].tolist()
+                gt_tokens = ground_truth_token_ids[i].tolist()
+                
+                # Log token overflow information
+                vocab_size = llm_tokenizer.vocab_size
+                pred_overflow = [t for t in pred_tokens if t < 0 or t >= vocab_size]
+                gt_overflow = [t for t in gt_tokens if t < 0 or t >= vocab_size]
+                
+                if pred_overflow or gt_overflow:
+                    text_log_file.write(f"Example {i} has token overflow:\n")
+                    if pred_overflow:
+                        text_log_file.write(f"  Predicted tokens outside vocab range [0, {vocab_size-1}]: {pred_overflow}\n")
+                    if gt_overflow:
+                        text_log_file.write(f"  Ground truth tokens outside vocab range [0, {vocab_size-1}]: {gt_overflow}\n")
+                
+                # Filter out invalid token IDs
+                pred_tokens = [t for t in pred_tokens if 0 <= t < vocab_size]
+                gt_tokens = [t for t in gt_tokens if 0 <= t < vocab_size]
+                
+                try:
+                    pred_text = llm_tokenizer.decode(pred_tokens, skip_special_tokens=True)
+                    gt_text = llm_tokenizer.decode(gt_tokens, skip_special_tokens=True)
+                    
+                    text_log_file.write(f"Example {i}:\n")
+                    text_log_file.write(f"  PREDICTED:\n{pred_text}\n\n")
+                    text_log_file.write(f"  GROUND TRUTH:\n{gt_text}\n\n")
+                except Exception as e:
+                    text_log_file.write(f"Example {i}: Error decoding tokens: {e}\n")
+            text_log_file.write("\n")
+
     # Compute accuracy for each tag
     for tag in tags:
         correct_tags = [0, 0]
+        tag_name = tag[:-1].lower()  # Remove the colon at the end
         
+        # Log decoded texts for this tag if we have a log file
+        if text_log_file is not None:
+            text_log_file.write(f"===== TAG: {tag} =====\n")
+            
+            # Sample up to 3 examples from the batch for logging
+            log_samples = min(3, len(predicted_token_ids))
+            for i in range(log_samples):
+                reasoning_pred = predicted_token_ids[i]
+                mask_pred = final_pred_masks[tag][i]
+                reasoning_gt = ground_truth_token_ids[i]
+                mask_gt = final_gt_masks[tag][i]
+                
+                tag_pred = torch.masked_select(reasoning_pred, mask_pred.bool())
+                tag_gt = torch.masked_select(reasoning_gt, mask_gt.bool())
+                
+                # Log token overflow information for this tag
+                vocab_size = llm_tokenizer.vocab_size
+                tag_pred_overflow = [t.item() for t in tag_pred if t.item() < 0 or t.item() >= vocab_size]
+                tag_gt_overflow = [t.item() for t in tag_gt if t.item() < 0 or t.item() >= vocab_size]
+                
+                if tag_pred_overflow or tag_gt_overflow:
+                    text_log_file.write(f"Example {i}, Tag {tag} has token overflow:\n")
+                    if tag_pred_overflow:
+                        text_log_file.write(f"  Predicted tokens outside vocab range [0, {vocab_size-1}]: {tag_pred_overflow}\n")
+                    if tag_gt_overflow:
+                        text_log_file.write(f"  Ground truth tokens outside vocab range [0, {vocab_size-1}]: {tag_gt_overflow}\n")
+                
+                # Sanitize token IDs before decoding
+                tag_pred_list = [t.item() for t in tag_pred if 0 <= t.item() < vocab_size]
+                tag_gt_list = [t.item() for t in tag_gt if 0 <= t.item() < vocab_size]
+                
+                try:
+                    # Decode tokens
+                    pred_text = llm_tokenizer.decode(tag_pred_list, skip_special_tokens=True)
+                    gt_text = llm_tokenizer.decode(tag_gt_list, skip_special_tokens=True)
+                    
+                    text_log_file.write(f"Example {i}:\n")
+                    text_log_file.write(f"  Predicted: {pred_text}\n")
+                    text_log_file.write(f"  Ground truth: {gt_text}\n\n")
+                except Exception as e:
+                    text_log_file.write(f"Example {i}: Error decoding tag tokens: {e}\n")
+        
+        # Calculate accuracy metrics
         for reasoning_pred, mask_pred, reasoning_gt, mask_gt in zip(
             predicted_token_ids, final_pred_masks[tag], ground_truth_token_ids, final_gt_masks[tag]
         ):
@@ -258,9 +365,48 @@ def compute_cot_accuracy(predicted_token_ids, ground_truth_token_ids, llm_tokeni
             correct_tags[0] += (tag_pred == tag_gt).sum().float()
             correct_tags[1] += len(tag_gt)
 
+        # Update total counts for overall accuracy
+        total_correct += correct_tags[0]
+        total_tokens += correct_tags[1]
+
         if correct_tags[1] > 0:
             tag_accuracy = correct_tags[0] / correct_tags[1]
-            metrics.update(**{f"reasoning/{tag[:-1].lower()}_tag_accuracy": tag_accuracy})
+            tag_accuracies[tag_name] = tag_accuracy.item()
+            metrics.update(**{f"reasoning/{tag_name}_tag_accuracy": tag_accuracy})
+    
+    # Calculate overall accuracy
+    overall_accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
+    metrics.update({"reasoning/overall_tag_accuracy": overall_accuracy})
+    
+    # Log accuracies to file
+    if text_log_file is not None:
+        text_log_file.write("===== ACCURACY METRICS =====\n")
+        for tag_name, acc in tag_accuracies.items():
+            text_log_file.write(f"{tag_name}: {acc:.4f}\n")
+        text_log_file.write(f"Overall: {overall_accuracy:.4f}\n\n")
+        
+        # Also write a CSV-formatted line for easier parsing/plotting
+        # Use separate CSV files for training and validation
+        if step is not None:
+            csv_file_path = os.path.join(log_dir, f"cot_tag_accuracies_{mode}.csv")
+            # Check if file exists, if not create with header
+            if not os.path.exists(csv_file_path):
+                with open(csv_file_path, "w") as csv_file:
+                    header = "step,batch,overall," + ",".join([t[:-1].lower() for t in tags])
+                    csv_file.write(header + "\n")
+            
+            # Append accuracy data
+            with open(csv_file_path, "a") as csv_file:
+                values = [str(step), str(batch_idx), f"{overall_accuracy:.4f}"]
+                for tag in tags:
+                    tag_name = tag[:-1].lower()
+                    values.append(f"{tag_accuracies.get(tag_name, 0):.4f}")
+                csv_file.write(",".join(values) + "\n")
+    
+    # Close the log file if we opened one
+    if text_log_file is not None:
+        text_log_file.write("\n\n")
+        text_log_file.close()
 
     return metrics
 
@@ -290,12 +436,15 @@ def get_metadata(reasoning: Dict[str, str]):
     metadata = {"gripper": [[0, 0]], "bboxes": dict()}
 
     if f" {CotTag.GRIPPER_POSITION.value}" in reasoning:
-        gripper_pos = reasoning[f" {CotTag.GRIPPER_POSITION.value}"]
-        gripper_pos = gripper_pos.split("[")[-1]
-        gripper_pos = gripper_pos.split("]")[0]
-        gripper_pos = [int(x) for x in gripper_pos.split(",")]
-        gripper_pos = [(gripper_pos[2 * i], gripper_pos[2 * i + 1]) for i in range(len(gripper_pos) // 2)]
-        metadata["gripper"] = gripper_pos
+        try:
+            gripper_pos = reasoning[f" {CotTag.GRIPPER_POSITION.value}"]
+            gripper_pos = gripper_pos.split("[")[-1]
+            gripper_pos = gripper_pos.split("]")[0]
+            gripper_pos = [int(x) for x in gripper_pos.split(",")]
+            gripper_pos = [(gripper_pos[2 * i], gripper_pos[2 * i + 1]) for i in range(len(gripper_pos) // 2)]
+            metadata["gripper"] = gripper_pos
+        except:
+            print("Error in gripper pos!")
 
     if f" {CotTag.VISIBLE_OBJECTS.value}" in reasoning:
         for sample in reasoning[f" {CotTag.VISIBLE_OBJECTS.value}"].split("]"):
@@ -572,3 +721,76 @@ MOVE: stop"""
             reasoning_text += f"\n\nGRIPPER POSITION: {default_gripper}"
         
         return reasoning_text
+
+def plot_cot_accuracy_curves(log_dir):
+    """
+    Generate plots of CoT tag accuracy over training steps.
+    
+    Args:
+        log_dir: Directory containing the cot_tag_accuracies.csv files
+    """
+    import os
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    
+    plot_dir = os.path.join(log_dir, "plots")
+    os.makedirs(plot_dir, exist_ok=True)
+    
+    for mode in ["train", "val"]:
+        csv_path = os.path.join(log_dir, f"cot_tag_accuracies_{mode}.csv")
+        if not os.path.exists(csv_path):
+            print(f"CSV file not found at {csv_path}")
+            continue
+        
+        # Read the CSV file
+        df = pd.read_csv(csv_path)
+        
+        # Plot overall accuracy
+        plt.figure(figsize=(10, 6))
+        plt.plot(df['step'], df['overall'], marker='o', linestyle='-', label='Overall')
+        plt.title(f'Overall CoT Tag Accuracy ({mode.upper()})')
+        plt.xlabel('Training Step')
+        plt.ylabel('Accuracy')
+        plt.grid(True)
+        plt.savefig(os.path.join(plot_dir, f'overall_accuracy_{mode}.png'))
+        plt.close()
+        
+        # Plot individual tag accuracies
+        tag_columns = [col for col in df.columns if col not in ['step', 'batch', 'overall']]
+        plt.figure(figsize=(12, 8))
+        for tag in tag_columns:
+            plt.plot(df['step'], df[tag], marker='.', linestyle='-', label=tag)
+        
+        plt.title(f'CoT Tag Accuracies ({mode.upper()})')
+        plt.xlabel('Training Step')
+        plt.ylabel('Accuracy')
+        plt.legend(loc='best')
+        plt.grid(True)
+        plt.savefig(os.path.join(plot_dir, f'tag_accuracies_{mode}.png'))
+        plt.close()
+    
+    # Create comparison plots if both train and val data exist
+    train_csv = os.path.join(log_dir, "cot_tag_accuracies_train.csv")
+    val_csv = os.path.join(log_dir, "cot_tag_accuracies_val.csv")
+    
+    if os.path.exists(train_csv) and os.path.exists(val_csv):
+        train_df = pd.read_csv(train_csv)
+        val_df = pd.read_csv(val_csv)
+        
+        # Plot overall accuracy comparison
+        plt.figure(figsize=(10, 6))
+        plt.plot(train_df['step'], train_df['overall'], 'b-', marker='o', label='Train')
+        
+        # For validation, we might have fewer points, so we need to be careful
+        val_steps = val_df['step'].values
+        plt.plot(val_steps, val_df['overall'], 'r-', marker='s', label='Validation')
+        
+        plt.title('Overall CoT Tag Accuracy (Train vs. Validation)')
+        plt.xlabel('Training Step')
+        plt.ylabel('Accuracy')
+        plt.legend(loc='best')
+        plt.grid(True)
+        plt.savefig(os.path.join(plot_dir, 'overall_accuracy_comparison.png'))
+        plt.close()
+    
+    print(f"Plots saved to {plot_dir}")

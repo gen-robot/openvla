@@ -35,6 +35,7 @@ class Config:
     model_family: str = "openvla"                    # Model family
     pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
     use_local_vla: bool = True
+    cot_tags: str = None
 
     window_size: Optional[int] = 1                    # If provided, uses a sliding window of this size to chunk the past observations and actions
     future_action_window_size: Optional[int] = 0      # If provided, uses a future action window of this size to chunk the future actions
@@ -129,6 +130,10 @@ def main(cfg: Config):
         action_list = []
 
         for i, step_data in enumerate(ep_data):
+            # Liangzhi: speed up test
+            if i % 10 != 0:
+                continue
+            
             if file_name is None:
                 file_name = step_data.get("file_name", b"").decode()
             if episode_id is None:
@@ -153,7 +158,7 @@ def main(cfg: Config):
             if len(reasoning) > 0:
                 reasoning_parts = reasoning.split("@")
                 tags = [(reasoning_parts[i], reasoning_parts[i + 1].rstrip()) for i in range(0, len(reasoning_parts), 2)]
-                reasoning_text = " ".join([f" {tag[0]} {tag[1]}" for tag in tags])
+                reasoning_text = "".join([f" {tag[0]} {tag[1]}" for tag in tags])
             else:
                 reasoning_text = ""
 
@@ -170,13 +175,15 @@ def main(cfg: Config):
                 if cfg.use_proprio:
                     observation["state"] = step_data["observation"]["proprio"][0]
 
+                # Liangzhi: Give ground truth reasoning text for test
                 vla_action_chunk, generated_ids = get_vla_action(
                     cfg, vla, processor, observation, language_instruction, 
                     action_head=action_head, 
                     proprio_projector=proprio_projector, 
                     use_film=cfg.use_film, 
                     do_sample=False,
-                    enable_cot="cot" in cfg.pretrained_checkpoint)
+                    enable_cot="cot" in cfg.pretrained_checkpoint,
+                    gt_reasoning_text=reasoning_text)
 
                 if "cot" in cfg.pretrained_checkpoint:
                     generated_text = processor.batch_decode(generated_ids)[0]

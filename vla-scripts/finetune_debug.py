@@ -26,6 +26,8 @@ from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import DataLoader
 from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
 from transformers.modeling_outputs import CausalLMOutputWithPast
+import json
+import numpy as np
 
 import wandb
 
@@ -47,10 +49,13 @@ from prismatic.models.projectors import (
 )
 from prismatic.training.train_utils import (
     compute_actions_l1_loss,
+    compute_actions_l1_loss_from_action,
     compute_token_accuracy,
+    compute_action_token_accuracy,
     get_current_action_mask,
     get_next_actions_mask,
-    get_valid_text_mask
+    get_valid_text_mask,
+    compute_token_accuracy_abs
 )
 from prismatic.util.data_utils import PaddedCollatorForActionPrediction
 from prismatic.util.cot_utils import compute_cot_accuracy, plot_cot_accuracy_curves
@@ -302,6 +307,7 @@ def init_module(
 
 
 def run_forward_pass(
+    cfg,
     batch_idx,
     vla,
     processor,
@@ -443,11 +449,42 @@ def run_forward_pass(
         curr_action_l1_loss = compute_actions_l1_loss(
             action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
         )
+        with torch.no_grad():
+            try:
+                input_idx = 0
+                while input_idx < batch["labels"].shape[1] and batch["labels"][0, input_idx] == -100:
+                    input_idx += 1
+                pred_continuous_actions, generated_ids, predicted_action_token_ids = vla.module.predict_action_autoregressive_without_unnormalized(
+                    input_ids=batch["input_ids"][:1, :input_idx].to(device_id),
+                    attention_mask=batch["attention_mask"][:1, :input_idx].to(device_id),
+                    pixel_values=batch["pixel_values"][:1].to(torch.bfloat16).to(device_id),
+                    do_sample=False,
+                    proprio=batch["proprio"][:1] if use_proprio else None,
+                    proprio_projector=proprio_projector if use_proprio else None,
+                    noisy_action_projector=noisy_action_projector if use_diffusion else None,
+                    use_film=use_film,
+                    action_head=action_head,
+                )
+                generated_action_accuracy = compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
+                generate_l1_loss = compute_actions_l1_loss_from_action(
+                    action_tokenizer, pred_continuous_actions, ground_truth_token_ids[:1], mask=current_action_mask[:1]
+                )
+                generated_cot_accuracy = compute_token_accuracy_abs(generated_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
+                metrics.update(
+                    {
+                        "generated_action_accuracy": generate_action_accuracy.item(),
+                        "generated_action_l1_loss": generate_l1_loss.item(),
+                        "generated_cot_accuracy": generated_cot_accuracy.item(),
+                    }
+                )
+            except:
+                print("Compute accuracy error!")
         metrics.update(
             {
                 "loss_value": loss.item(),  # Detached value for logging
                 "curr_action_accuracy": curr_action_accuracy.item(),
                 "curr_action_l1_loss": curr_action_l1_loss.item(),
+                "generated_action_l1_loss": generate_l1_loss.item(),
             }
         )
         if next_actions_mask.any():
@@ -819,6 +856,7 @@ def run_validation(
         for batch_idx, batch in enumerate(val_dataloader):
             # Always compute L1 loss for validation, even for diffusion
             _, metrics = run_forward_pass(
+                cfg=cfg,
                 batch_idx=batch_idx,
                 vla=vla,
                 processor=processor,
@@ -867,11 +905,19 @@ def run_validation(
 
     # Generate plots periodically during training (every 5 validation runs)
     if cfg.enable_cot and distributed_state.is_main_process and cot_log_dir and log_step % (cfg.val_freq * 5) == 0:
-        try:
-            plot_cot_accuracy_curves(cot_log_dir)
-            print(f"CoT accuracy curves plotted at step {log_step}")
-        except Exception as e:
-            print(f"Error plotting CoT accuracy curves: {e}")
+        plot_cot_accuracy_curves(cot_log_dir)
+        print(f"CoT accuracy curves plotted at step {log_step}")
+
+
+class NumpyFloatValuesEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        elif isinstance(obj, (np.floating,)):
+            return float(obj)
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        return super().default(obj)
 
 
 @draccus.wrap()
@@ -1215,6 +1261,8 @@ def finetune(cfg: FinetuneConfig) -> None:
     }
 
     
+    save_list_for_check = []
+
     # Start training
     with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
         vla.train()
@@ -1224,9 +1272,28 @@ def finetune(cfg: FinetuneConfig) -> None:
             gradient_step_idx = batch_idx // cfg.grad_accumulation_steps
             log_step = gradient_step_idx if not cfg.resume else cfg.resume_step + gradient_step_idx
 
+            # save_metadata = batch["metadata"]
+            # save_metadata["timesteps"] = np.array(save_metadata["timesteps"]).tolist()
+
+            # save_list_for_check.append({"input_ids": batch["input_ids"].cpu().numpy().tolist(), 
+            #                             "labels": batch["labels"].cpu().numpy().tolist(),
+            #                             "actions": batch["actions"].cpu().numpy().tolist(),
+            #                             "metadata": save_metadata})
+            # # print(save_list_for_check[-1], batch["metadata"]["episode_ids"][0])
+
+            # if len(save_list_for_check) < 10:
+            #     continue
+            # else:
+            #     save_dir = "./outputs/debug/save.json"
+            #     os.makedirs("./outputs/debug", exist_ok=True)
+            #     with open(save_dir, "w") as f:
+            #         json.dump(save_list_for_check, f, indent=1)
+            #     exit(0)
+
             # Compute training metrics and loss
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
             loss, metrics = run_forward_pass(
+                cfg=cfg,
                 batch_idx=batch_idx,
                 vla=vla,
                 processor=processor,

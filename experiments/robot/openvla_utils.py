@@ -753,6 +753,8 @@ def get_vla_action(
     do_sample: bool = False,
     enable_cot: bool = False,
     gemini_cot_annotator: Optional[Any] = None,
+    gt_reasoning_text: Optional[str] = None,
+    is_debug: bool = False,
 ) -> List[np.ndarray]:
     """
     Generate action predictions with the VLA policy.
@@ -790,7 +792,9 @@ def get_vla_action(
         # Build VLA prompt
         prompt = f"In: What action should the robot take to {task_label.lower()}?\nOut:"
         if enable_cot:
-            if gemini_cot_annotator is not None:
+            if gt_reasoning_text is not None and gt_reasoning_text != "":
+                prompt += " " + gt_reasoning_text # + " ACTION: "
+            elif gemini_cot_annotator is not None:
                 cot_prompt = gemini_cot_annotator.annotate(
                     language_instruction=task_label, 
                     image=primary_image,
@@ -821,6 +825,43 @@ def get_vla_action(
             proprio_norm_stats = vla.norm_stats[cfg.unnorm_key]["proprio"]
             obs["state"] = normalize_proprio(proprio, proprio_norm_stats)
             proprio = obs["state"]
+
+        if is_debug:
+            import copy
+            total_count = 0
+            next_success_count = 0
+            next_10_success_count = 0
+            next_50_success_count = 0
+            next_100_success_count = 0
+            next_200_success_count = 0
+            for idx in range(100, 300):
+                clone_inputs = copy.deepcopy(inputs)
+                clone_inputs["input_ids"] = clone_inputs["input_ids"][:, :idx]
+                clone_inputs["attention_mask"] = clone_inputs["attention_mask"][:, :idx]
+
+                test_action, text_generated_ids = vla.predict_action_autoregressive(
+                    **clone_inputs, 
+                    unnorm_key=cfg.unnorm_key, 
+                    do_sample=do_sample,
+                    proprio=proprio,
+                    proprio_projector=proprio_projector,
+                    noisy_action_projector=noisy_action_projector,
+                    use_film=use_film,
+                    action_head=action_head,
+                )
+                print("Check out:", text_generated_ids[0, idx - 5: idx + 5], inputs["input_ids"][0, idx - 5: idx + 5])
+                total_count += 1
+                if text_generated_ids.shape[1] > idx and text_generated_ids[0, idx] == inputs["input_ids"][0, idx]:
+                    next_success_count += 1
+                if text_generated_ids.shape[1] > idx + 9 and text_generated_ids[0, idx + 9] == inputs["input_ids"][0, idx + 9]:
+                    next_10_success_count += 1
+                if text_generated_ids.shape[1] > idx + 49 and text_generated_ids[0, idx + 49] == inputs["input_ids"][0, idx + 49]:
+                    next_50_success_count += 1
+                if text_generated_ids.shape[1] > idx + 99 and text_generated_ids[0, idx + 99] == inputs["input_ids"][0, idx + 99]:
+                    next_100_success_count += 1
+                if text_generated_ids.shape[1] > idx + 199 and text_generated_ids[0, idx + 199] == inputs["input_ids"][0, idx + 199]:
+                    next_200_success_count += 1
+                print(f"check: {next_success_count} / {total_count}, {next_10_success_count} / {total_count}, {next_50_success_count} / {total_count}, {next_100_success_count} / {total_count}, {next_200_success_count} / {total_count}.")
 
         # Generate action
         action, generated_ids = vla.predict_action(

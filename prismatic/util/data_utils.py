@@ -155,6 +155,11 @@ class PaddedCollatorForActionPrediction:
         else:
             history_dict = None
 
+        # Liangzhi: Process metadata for debug
+        episode_ids = [instance["metadata"]["episode_id"].decode("utf-8") for instance in instances]
+        timesteps = [np.array(instance["metadata"]["timestep"]) for instance in instances]
+        metadata = {"episode_ids": episode_ids, "timesteps": timesteps}
+
         output = dict(
             pixel_values=pixel_values,
             proprio=proprio,
@@ -162,6 +167,7 @@ class PaddedCollatorForActionPrediction:
             attention_mask=attention_mask,
             labels=labels,
             actions=actions,
+            metadata=metadata,
         )
         if dataset_names is not None:
             output["dataset_names"] = dataset_names

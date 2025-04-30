@@ -1188,6 +1188,31 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         # Unnormalize actions
         actions = self._unnormalize_actions(normalized_actions, unnorm_key)
         return actions, generated_ids
+    
+    def predict_action_autoregressive_without_unnormalized(
+        self, 
+        input_ids: torch.LongTensor, 
+        **kwargs
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Thin wrapper around super().generate() that decodes predicted actions and de-normalizes them."""
+        generated_ids = self.generate(
+            input_ids, 
+            max_new_tokens=1024,
+            **kwargs)
+
+        # Extract predicted action tokens and translate into (normalized) continuous actions
+        # if the last token is not stop token, select last action-dim tokens, otherwise get rid of the stop token, and then select last action-dim tokens
+        action_total_dim = self.action_chunk * self.action_dim
+        if generated_ids[0, -1] != STOP_INDEX:
+            predicted_action_token_ids = generated_ids[0, -action_total_dim :].cpu().numpy()
+        else:
+            predicted_action_token_ids = generated_ids[0, -action_total_dim - 1 : -1].cpu().numpy()
+        discretized_actions = self.vocab_size - predicted_action_token_ids
+        discretized_actions = np.clip(discretized_actions - 1, a_min=0, a_max=self.bin_centers.shape[0] - 1)
+        normalized_actions = self.bin_centers[discretized_actions]
+        normalized_actions = normalized_actions.reshape(self.action_chunk, self.action_dim)
+
+        return normalized_actions, generated_ids, predicted_action_token_ids
 
     @staticmethod
     def _check_unnorm_key(norm_stats: Dict[str, Dict[str, Any]], unnorm_key: Optional[str]) -> str:

@@ -118,7 +118,7 @@ class RLDSBatchTransform:
 
         for turn in conversation:
             prompt_builder.add_turn(turn["from"], turn["value"])
-
+        
         # Tokenize (w/ `base_tokenizer`)
         input_ids = self.base_tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids
         labels = list(input_ids)
@@ -164,6 +164,10 @@ class RLDSBatchTransform:
             labels=labels,
             dataset_name=dataset_name,
             actions=actions,
+            metadata=dict(
+                episode_id=rlds_batch["episode_id"],
+                timestep=rlds_batch["observation"]["timestep"][0],
+            )
         )
         # Add additional inputs
         if self.use_wrist_image:
