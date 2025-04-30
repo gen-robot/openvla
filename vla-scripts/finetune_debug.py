@@ -465,15 +465,16 @@ def run_forward_pass(
                     use_film=use_film,
                     action_head=action_head,
                 )
+                predicted_action_token_ids = torch.tensor(predicted_action_token_ids).to(ground_truth_token_ids.device).to(ground_truth_token_ids.dtype)
                 generated_action_accuracy = compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
-                generate_l1_loss = compute_actions_l1_loss_from_action(
+                generated_l1_loss = compute_actions_l1_loss_from_action(
                     action_tokenizer, pred_continuous_actions, ground_truth_token_ids[:1], mask=current_action_mask[:1]
                 )
                 generated_cot_accuracy = compute_token_accuracy_abs(generated_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
                 metrics.update(
                     {
-                        "generated_action_accuracy": generate_action_accuracy.item(),
-                        "generated_action_l1_loss": generate_l1_loss.item(),
+                        "generated_action_accuracy": generated_action_accuracy.item(),
+                        "generated_action_l1_loss": generated_l1_loss.item(),
                         "generated_cot_accuracy": generated_cot_accuracy.item(),
                     }
                 )
@@ -484,7 +485,6 @@ def run_forward_pass(
                 "loss_value": loss.item(),  # Detached value for logging
                 "curr_action_accuracy": curr_action_accuracy.item(),
                 "curr_action_l1_loss": curr_action_l1_loss.item(),
-                "generated_action_l1_loss": generate_l1_loss.item(),
             }
         )
         if next_actions_mask.any():

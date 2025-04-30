@@ -29,16 +29,16 @@ else
     project_name="VLA-Reasoning"
 fi
 # openvla-ecot/ecot-openvla-7b-oxe \
-torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune_debug.py \
-  --vla_path openvla-ecot/ecot-openvla-7b-oxe \
-  --data_root_dir datasets/libero_data \
+torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
+  --vla_path /nvme_data/liangzhi/pretrained/ecot-openvla-7b-oxe/ \
+  --data_root_dir /nvme_data/liangzhi/openvla_dataset/libero_dataset/libero_object_original \
   --dataset_name ${task_name} \
   --run_root_dir checkpoints/${task_name} \
   --use_proprio ${use_proprio} \
   --use_film ${use_film} \
   --num_images_in_input ${num_images_in_input} \
   --use_lora ${use_lora} \
-  --lora_rank 32 \
+  --lora_rank 1 \
   --batch_size 1 \
   --grad_accumulation_steps 4 \
   --learning_rate 5e-4 \

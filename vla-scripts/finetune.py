@@ -47,10 +47,13 @@ from prismatic.models.projectors import (
 )
 from prismatic.training.train_utils import (
     compute_actions_l1_loss,
+    compute_actions_l1_loss_from_action,
     compute_token_accuracy,
+    compute_action_token_accuracy,
     get_current_action_mask,
     get_next_actions_mask,
-    get_valid_text_mask
+    get_valid_text_mask,
+    compute_token_accuracy_abs
 )
 from prismatic.util.data_utils import PaddedCollatorForActionPrediction
 from prismatic.util.cot_utils import compute_cot_accuracy, plot_cot_accuracy_curves
@@ -302,6 +305,7 @@ def init_module(
 
 
 def run_forward_pass(
+    cfg,
     batch_idx,
     vla,
     processor,
@@ -443,6 +447,37 @@ def run_forward_pass(
         curr_action_l1_loss = compute_actions_l1_loss(
             action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
         )
+        with torch.no_grad():
+            try:
+                input_idx = 0
+                while input_idx < batch["labels"].shape[1] and batch["labels"][0, input_idx] == -100:
+                    input_idx += 1
+                pred_continuous_actions, generated_ids, predicted_action_token_ids = vla.module.predict_action_autoregressive_without_unnormalized(
+                    input_ids=batch["input_ids"][:1, :input_idx].to(device_id),
+                    attention_mask=batch["attention_mask"][:1, :input_idx].to(device_id),
+                    pixel_values=batch["pixel_values"][:1].to(torch.bfloat16).to(device_id),
+                    do_sample=False,
+                    proprio=batch["proprio"][:1] if use_proprio else None,
+                    proprio_projector=proprio_projector if use_proprio else None,
+                    noisy_action_projector=noisy_action_projector if use_diffusion else None,
+                    use_film=use_film,
+                    action_head=action_head,
+                )
+                predicted_action_token_ids = torch.tensor(predicted_action_token_ids).to(ground_truth_token_ids.device).to(ground_truth_token_ids.dtype)
+                generated_action_accuracy = compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
+                generated_l1_loss = compute_actions_l1_loss_from_action(
+                    action_tokenizer, pred_continuous_actions, ground_truth_token_ids[:1], mask=current_action_mask[:1]
+                )
+                generated_cot_accuracy = compute_token_accuracy_abs(generated_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
+                metrics.update(
+                    {
+                        "generated_action_accuracy": generated_action_accuracy.item(),
+                        "generated_action_l1_loss": generated_l1_loss.item(),
+                        "generated_cot_accuracy": generated_cot_accuracy.item(),
+                    }
+                )
+            except:
+                print("Compute accuracy error!")
         metrics.update(
             {
                 "loss_value": loss.item(),  # Detached value for logging
@@ -819,6 +854,7 @@ def run_validation(
         for batch_idx, batch in enumerate(val_dataloader):
             # Always compute L1 loss for validation, even for diffusion
             _, metrics = run_forward_pass(
+                cfg=cfg,
                 batch_idx=batch_idx,
                 vla=vla,
                 processor=processor,
@@ -1227,6 +1263,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             # Compute training metrics and loss
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
             loss, metrics = run_forward_pass(
+                cfg=cfg,
                 batch_idx=batch_idx,
                 vla=vla,
                 processor=processor,
