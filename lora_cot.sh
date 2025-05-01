@@ -26,14 +26,14 @@ if [ ${is_debug} = True ]; then
 #     num_gpus=8
 #     project_name="VLA-Reasoning"
 else
-    num_gpus=1
+    num_gpus=4
     project_name="VLA-Reasoning"
 fi
 # openvla-ecot/ecot-openvla-7b-oxe \
 if [ ${cot_full} = True ]; then
-  torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune-cot-single.py \
+  torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
     --vla_path /nvme_data/liangzhi/pretrained/ecot-openvla-7b-oxe/ \
-    --data_root_dir /nvme_data/liangzhi/openvla_dataset/libero_dataset/libero_object_original \
+    --data_root_dir datasets \
     --dataset_name ${task_name} \
     --run_root_dir checkpoints/${task_name} \
     --use_proprio ${use_proprio} \
@@ -42,7 +42,7 @@ if [ ${cot_full} = True ]; then
     --use_lora ${use_lora} \
     --lora_rank 32 \
     --batch_size 1 \
-    --grad_accumulation_steps 16 \
+    --grad_accumulation_steps 4 \
     --learning_rate 5e-4 \
     --image_aug False \
     --wandb_project ${project_name} \
@@ -58,9 +58,9 @@ if [ ${cot_full} = True ]; then
     --val_freq 1000 
   #   --cot_tags ${cot_tags}
 else
-  torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune-cot-single.py \
+  torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
     --vla_path /nvme_data/liangzhi/pretrained/ecot-openvla-7b-oxe/ \
-    --data_root_dir /nvme_data/liangzhi/openvla_dataset/libero_dataset/libero_object_original \
+    --data_root_dir datasets \
     --dataset_name ${task_name} \
     --run_root_dir checkpoints/${task_name} \
     --use_proprio ${use_proprio} \
@@ -69,7 +69,7 @@ else
     --use_lora ${use_lora} \
     --lora_rank 32 \
     --batch_size 1 \
-    --grad_accumulation_steps 16 \
+    --grad_accumulation_steps 4 \
     --learning_rate 5e-4 \
     --image_aug False \
     --wandb_project ${project_name} \
