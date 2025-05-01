@@ -12,7 +12,7 @@ use_diffusion=False                 # if True, it will use the diffusion head
 merge_lora_during_training=False    # if True, it will merge the LoRA weights during training, which will slightly increase the GPU memory usage
 num_actions_chunk=1                 # the number of actions to be predicted
 use_parallel_decoding=False         # if you use a large chunk_size, make sure you have enabled parallel decoding in the model to increase the throughput
-is_debug=False
+is_debug=True
 enable_cot=True
 use_lora=True
 cot_tags="move_reason,move"
@@ -53,5 +53,5 @@ torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetu
   --num_actions_chunk ${num_actions_chunk} \
   --use_val_set False \
   --save_freq 5000 \
-  --val_freq 5000 \
-  --cot_tags ${cot_tags}
+  --val_freq 5000
+#   --cot_tags ${cot_tags}

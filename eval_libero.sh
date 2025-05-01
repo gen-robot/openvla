@@ -33,7 +33,7 @@ if [[ "$ckpt_path" == *"cot"* ]]; then
     --center_crop True \
     --num_open_loop_steps 1 \
     --num_actions_chunk 1 \
-    --enable_cot False \
+    --enable_cot True \
     --use_gemini_cot False
 else
   python experiments/robot/libero/run_libero_eval.py \

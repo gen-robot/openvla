@@ -33,6 +33,8 @@ from prismatic.vla.constants import (
     ACTION_PROPRIO_NORMALIZATION_TYPE,
 )
 from prismatic.vla.datasets.rlds.utils.data_utils import NormalizationType
+from prismatic.util.cot_utils import get_inverse_cot_database_keys
+
 
 # Initialize important constants
 DATE = time.strftime("%Y_%m_%d")
@@ -753,6 +755,7 @@ def get_vla_action(
     do_sample: bool = False,
     enable_cot: bool = False,
     gemini_cot_annotator: Optional[Any] = None,
+    cot_tags: Optional[str] = None
 ) -> List[np.ndarray]:
     """
     Generate action predictions with the VLA policy.
@@ -798,11 +801,20 @@ def get_vla_action(
                     return_formatted_string=True
                 )
                 prompt += " " + cot_prompt + " ACTION: "
+            elif cot_tags is not None:
+                first_tag = cot_tags.split(",")[0]
+                inverse_cot_database_keys = get_inverse_cot_database_keys()
+                if first_tag in inverse_cot_database_keys.keys():
+                    prompt += f" {inverse_cot_database_keys[first_tag]}"
+                else:
+                    raise ValueError(f"Unsupported CoT tag: {first_tag}")
             else:
-                prompt += " TASK:"
+                prompt += " TASK:" # check token
 
         # Process primary image
         inputs = processor(prompt, primary_image).to(DEVICE, dtype=torch.bfloat16)
+
+        import pdb; pdb.set_trace()
 
         # Process additional wrist images if any
         if all_images:

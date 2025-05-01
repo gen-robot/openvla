@@ -121,6 +121,7 @@ class RLDSBatchTransform:
 
         # Tokenize (w/ `base_tokenizer`)
         input_ids = self.base_tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids
+        import pdb; pdb.set_trace()
         labels = list(input_ids)
 
         # Find the sequence of split tokens in labels
