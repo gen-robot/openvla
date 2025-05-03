@@ -16,14 +16,7 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.path = "../../../SimplerEnv/videos/dpo"
-        self.tasks = [
-            # "OpenVLA-7B-SFT-Simpler_PutSpoonOnTableClothInScene-v1",
-            "OpenVLA-7B-SFT-Simpler_PutCarrotOnPlateInScene-v1",
-            # "OpenVLA-7B-SFT-Simpler_StackGreenCubeOnYellowCubeBakedTexInScene-v1",
-            # "OpenVLA-7B-SFT-Simpler_PutEggplantInBasketScene-v1",
-        ]
-        self.pair_per_ep = 1
+        self.path = "../../../SimplerEnv/wandb/offline-run-20250404_230436-6rezxkqh/glob/data"
 
     def _info(self) -> tfds.core.DatasetInfo:
         """Dataset metadata (homepage, citation,...)."""
@@ -51,11 +44,11 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(0, 20),
-            'val': self._generate_examples(20, 2),
+            'train': self._generate_examples(1150, spare=45),
+            'val': self._generate_examples(45, start=1150),
         }
 
-    def _generate_examples(self, start_ep, num_ep) -> Iterator[Tuple[str, Any]]:
+    def _generate_examples(self, num_ep, spare=0, start=0) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
 
         def _parse_example(episode_path):
@@ -92,23 +85,20 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             return sample
 
         all_files = []
-        for task in self.tasks:
-            task_path = Path(self.path) / task
-            eps = sorted(list(task_path.glob("*")))
-            eps = eps[start_ep:start_ep + num_ep]
-            print(f"Task {task}: {len(eps)} episodes")
+        path = Path(self.path)
+        files = sorted(glob.glob(str(path / "*.npy")))
+        if spare > 0:
+            files = files[:-spare]
+        if start > 0:
+            start = min(start, len(files) - num_ep)
+        files = files[start:start + num_ep]
 
-            for ep in eps:
-                files = sorted(list(ep.glob("*-success_1.npy")))
-                files = files[:self.pair_per_ep]
-                files = [str(f) for f in files] # convert to string
+        print(f"{len(files)}")
 
-                assert len(files) == self.pair_per_ep, f"Expected {self.pair_per_ep} files, got {len(files)}"
-
-                all_files.extend(files)
+        all_files.extend(files)
 
         for idx, ep_path in enumerate(all_files):
             sample = _parse_example(ep_path)
             yield ep_path, sample
 
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_dpos_dataset
+# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/widowx_pc1195

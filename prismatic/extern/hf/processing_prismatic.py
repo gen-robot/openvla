@@ -125,9 +125,13 @@ class PrismaticImageProcessor(ImageProcessingMixin):
         # Dispatch **kwargs to super()
         super().__init__(**kwargs)
 
-    def apply_transform(self, img: Image.Image) -> torch.Tensor:
-        """Apply `functional` variant of TIMM's Transform = Compose([Resize -> CenterCrop -> ToTensor -> Normalize])"""
+    def apply_transform(self, img: torch.Tensor) -> torch.Tensor:
+        """
+        Apply `functional` variant of TIMM's Transform = Compose([Resize -> CenterCrop -> ToTensor -> Normalize])
+        img: [B, C, H, W]
+        """
         if self.tvf_do_letterbox:
+            raise NotImplementedError("Letterbox padding is not yet supported!")
             img = letterbox_pad_transform(img, self.tvf_letterbox_fill)
 
         # [Contract] Fused Backbones expect "channel-stacked" inputs; we'll unpack on the model side!
@@ -135,38 +139,38 @@ class PrismaticImageProcessor(ImageProcessingMixin):
         for idx in range(len(self.input_sizes)):
             img_idx = TVF.resize(img, **self.tvf_resize_params[idx])
             img_idx = TVF.center_crop(img_idx, **self.tvf_crop_params[idx])
-            img_idx_t = TVF.to_tensor(img_idx)
-            img_idx_t = TVF.normalize(img_idx_t, **self.tvf_normalize_params[idx])
-            imgs_t.append(img_idx_t)
+            # img_idx = TVF.to_tensor(img_idx)
+            img_idx = img_idx / 255.0
+            img_idx = TVF.normalize(img_idx, **self.tvf_normalize_params[idx])
 
-        # [Contract] `imgs_t` is a list of Tensors of shape [3, input_size, input_size]; stack along dim = 0
-        img_t = torch.vstack(imgs_t)
+            imgs_t.append(img_idx)
+
+        # [Contract] `imgs_t` is a list of Tensors of shape [B, C, H, W]; stack along dim C
+        img_t = torch.cat(imgs_t, dim=1)  # [B, C * n, H, W]
 
         return img_t
 
     def preprocess(
         self,
-        images: Union[Image.Image, List[Image.Image]],
+        images: torch.Tensor,
         return_tensors: Optional[Union[str, TensorType]] = None,
         **_: str,
     ) -> BatchFeature:
         """
         Preprocess an image (or batch of images); note that unlike the `transformers :: BaseImageProcessor` we
         explicitly only handle PIL.Image.Image instances for simplicity.
-        @param images: A (batch of) PIL.Image.Image instance(s) to preprocess.
+        @param images: [B, C, H, W]
         @param return_tensors: BatchFeature default Tensor format (e.g., "pt" for torch); if None, returns np.ndarray
         @return: Instance of `transformers :: BatchFeature` with a single key "pixel_values"
         """
-        if not isinstance(images, list):
-            images = [images]
 
         # Apply `self.img_transform` to each image (will return list of torch.Tensors); stack into "batched" Tensor
-        pixel_values = torch.stack([self.apply_transform(img.convert("RGB")) for img in images])
+        pixel_values = self.apply_transform(images)
 
-        # Return BatchFeature =>> note that for compatibility, constructor expects Dict[str, np.ndarray], so we convert
-        return BatchFeature(data={"pixel_values": pixel_values.float().numpy()}, tensor_type=return_tensors)
+        # Dict[str, torch.Tensor]
+        return BatchFeature(data={"pixel_values": pixel_values}, tensor_type=return_tensors)
 
-    def __call__(self, images: Union[Image.Image, List[Image.Image]], **kwargs) -> BatchFeature:
+    def __call__(self, images: torch.Tensor, **kwargs) -> BatchFeature:
         return self.preprocess(images, **kwargs)
 
 
@@ -187,7 +191,7 @@ class PrismaticProcessor(ProcessorMixin):
     def __call__(
         self,
         text: Union[TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]],
-        images: Union[Image.Image, List[Image.Image]],
+        images: torch.Tensor,
         padding: Union[bool, str, PaddingStrategy] = False,
         truncation: Optional[Union[bool, str, TruncationStrategy]] = None,
         max_length: Optional[int] = None,
@@ -197,7 +201,7 @@ class PrismaticProcessor(ProcessorMixin):
         Preprocess a given (batch) of text/images for a Prismatic VLM; forwards text to the underlying LLM's tokenizer,
         forwards images to PrismaticImageProcessor.
         @param text: The (batch) of text to encode; must be a string or list of strings.
-        @param images: A (batch of) PIL.Image.Image instance(s) to preprocess.
+        @param images: torch.Tensor [B, C, H, W].
         @param padding: Sequence padding strategy (if multiple specified) in < True = "longest" | "max_length" | False >
         @param truncation: Truncation strategy for the output sequences; requires `max_length` to be specified
         @param max_length: Maximum length (in tokens) to truncate
