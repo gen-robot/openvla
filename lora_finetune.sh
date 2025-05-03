@@ -41,12 +41,12 @@ torchrun --standalone --nnodes 1 --nproc-per-node 2 vla-scripts/finetune_distrib
   --save_optimizer True
 
 # mv checkpoints/grape_simpler_sft checkpoints/grape_simpler_sft_dataset
+task_name="spc148f"
 CUDA_VISIBLE_DEVICES=0 \
 torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/merge_lora.py \
   --vla_path "openvla/openvla-7b" \
-  --run_path "checkpoints/${task_name}/1.0.0/steps_50000_bs_8" \
-  --lora_name "lora_050000"
-
+  --run_path "checkpoints/${task_name}/steps_2000" \
+  --lora_name "lora_002000"
 
 
 # new jijia

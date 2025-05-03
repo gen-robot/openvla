@@ -30,9 +30,7 @@ def merge(cfg: MergeConfig) -> None:
     merge_path = run_path / cfg.lora_name.replace("lora", "merged")
     os.makedirs(merge_path, exist_ok=True)
 
-    # TODO here
-    processor = AutoProcessor.from_pretrained(str(lora_path), trust_remote_code=True)
-    # processor = AutoProcessor.from_pretrained(str(run_path), trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(str(run_path), trust_remote_code=True) # my change lora path
     base_vla = AutoModelForVision2Seq.from_pretrained(
         cfg.vla_path, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, trust_remote_code=True
     )
