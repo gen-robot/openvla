@@ -6,24 +6,21 @@ import numpy as np
 import tensorflow_datasets as tfds
 
 
-class ExampleDataset(tfds.core.GeneratorBasedBuilder):
+class PandaSimplerSpoonDataset(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for example dataset."""
 
     VERSION = tfds.core.Version('1.0.0')
     RELEASE_NOTES = {
-        '1.0.0': 'Initial release.',
+        '1.0.0': """panda simpler pc: 949 traj""",
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.path = "../../../SimplerEnv/videos/dpo"
+        self.path = "../../../SimplerEnv/videos/datasets_mp/"
         self.tasks = [
-            # "OpenVLA-7B-SFT-Simpler_PutSpoonOnTableClothInScene-v1",
-            "OpenVLA-7B-SFT-Simpler_PutCarrotOnPlateInScene-v1",
-            # "OpenVLA-7B-SFT-Simpler_StackGreenCubeOnYellowCubeBakedTexInScene-v1",
-            # "OpenVLA-7B-SFT-Simpler_PutEggplantInBasketScene-v1",
+            "PandaPutCarrotOnPlateInScene1920-v1/20250325_000610/data",
         ]
-        self.pair_per_ep = 1
+        assert len(self.tasks)==1, "task_num is false."
 
     def _info(self) -> tfds.core.DatasetInfo:
         """Dataset metadata (homepage, citation,...)."""
@@ -48,14 +45,15 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
                 }),
             }))
 
+    # actually, we have the number of tasks times the number of episodes examples in _split generators
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(0, 20),
-            'val': self._generate_examples(20, 2),
+            'train': self._generate_examples(930, spare=19),
+            'val': self._generate_examples(19, start=930),
         }
 
-    def _generate_examples(self, start_ep, num_ep) -> Iterator[Tuple[str, Any]]:
+    def _generate_examples(self, num_ep, spare=0, start=0) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
 
         def _parse_example(episode_path):
@@ -70,10 +68,10 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
                         'image': np.asarray(data["image"][i]),
                     },
                     'action': data["action"][i],
-                    'language_instruction': data['instruction'],
+                    'language_instruction': data['instruction'][0],
                 })
 
-                if data["info"][i]["success"]:
+                if data["info"][i]["success"][0]:
                     success_count += 1
                 else:
                     success_count = 0
@@ -92,23 +90,38 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             return sample
 
         all_files = []
-        for task in self.tasks:
-            task_path = Path(self.path) / task
-            eps = sorted(list(task_path.glob("*")))
-            eps = eps[start_ep:start_ep + num_ep]
-            print(f"Task {task}: {len(eps)} episodes")
+        for task in self.tasks: # for every task
+            path = Path(self.path) / task
+            files = sorted(glob.glob(str(path / "*.npy")))
+            if spare > 0:
+                files = files[:-spare]
+            if start + num_ep > len(files):
+                start = len(files) - num_ep
 
-            for ep in eps:
-                files = sorted(list(ep.glob("*-success_0.npy")))
-                files = files[:self.pair_per_ep]
-                files = [str(f) for f in files] # convert to string
+            files = files[start:start + num_ep]
 
-                assert len(files) == self.pair_per_ep, f"Expected {self.pair_per_ep} files, got {len(files)}"
+            print(f"{task}: {len(files)}")
 
-                all_files.extend(files)
+            all_files.extend(files)
 
         for idx, ep_path in enumerate(all_files):
             sample = _parse_example(ep_path)
             yield ep_path, sample
 
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/grape_simpler_dpof_dataset
+
+        # # create list of all examples
+        # episode_paths = glob.glob(path)
+
+        # # for smallish datasets, use single-thread parsing
+        # # for sample in episode_paths:
+        # #     yield _parse_example(sample)
+
+        # # for large datasets use beam to parallelize data parsing (this will have initialization overhead)
+        # beam = tfds.core.lazy_imports.apache_beam
+        # return (
+        #         beam.Create(episode_paths)
+        #         | beam.Map(_parse_example)
+        # )
+
+# tfds build --overwrite
+# mv -T ~/tensorflow_datasets/panda_simpler_spoon_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/panda_pc949
