@@ -121,6 +121,27 @@ torchrun --standalone --nnodes=1 --nproc-per-node 1 vla-scripts/finetune_grape.p
   --wandb_entity "hosnls" \
   --save_steps 1000
 
+# for 40GB training
+train_cuda_device=1
+ref_cuda_device=2
+CUDA_VISIBLE_DEVICES=$train_cuda_device \
+torchrun --standalone --nnodes=1 --nproc-per-node=1 vla-scripts/finetune_grape_pair.py \
+  --vla_path "openvla/openvla-7b" \
+  --dataset_s_name "grape_simpler_dpos_dataset" \
+  --dataset_f_name "grape_simpler_dpof_dataset" \
+  --traj_dir "../datasets" \
+  --run_root_dir "results/grape/root" \
+  --adapter_tmp_dir "results/grape/adapter" \
+  --lora_rank 32 \
+  --batch_size 1 \
+  --grad_accumulation_steps 1 \
+  --learning_rate 2e-5 \
+  --image_aug False \
+  --wandb_project "rlvla_sft" \
+  --wandb_entity "hosnls" \
+  --save_steps 1000 \
+  --ref_cuda_device $ref_cuda_device
+
 CUDA_VISIBLE_DEVICES=3 \
 torchrun --standalone --nnodes 1 --nproc-per-node 1 vla-scripts/merge_lora_dpo.py \
   --vla_path "ZijianZhang/OpenVLA-7B-SFT-Simpler" \

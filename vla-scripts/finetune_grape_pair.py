@@ -507,6 +507,8 @@ class FinetuneConfig:
     wandb_project: str = "your project"                                  # Name of W&B project to log to (use default!)
     wandb_entity: str = "your entity"                          # Name of entity to log under
 
+    ref_cuda_device: str = ""
+
     # fmt: on
 def flatshape(traj_a,traj_b):
     flat_traj_a = [step for window in traj_a for step in window]
@@ -534,7 +536,10 @@ def finetune(cfg: FinetuneConfig) -> None:
     assert torch.cuda.is_available(), "Fine-tuning assumes at least one GPU is available!"
     distributed_state = PartialState()
     torch.cuda.set_device(device_id := distributed_state.local_process_index)
-    print(device_id)
+    print("device_id:", device_id)
+    ref_device_ids = list(map(int, cfg.ref_cuda_device.split(',')))
+    ref_device_id = ref_device_ids[distributed_state.process_index]
+    print("ref_device_id:",ref_device_id)
     torch.cuda.empty_cache()
 
     # Configure Unique Experiment ID & Log Directory
@@ -590,19 +595,21 @@ def finetune(cfg: FinetuneConfig) -> None:
 
 
     # Load reference model(OpenVLA-SFT)
+    # Reference model only for inference, not training
     vla_ref = AutoModelForVision2Seq.from_pretrained(
         cfg.vla_path,
         torch_dtype=torch.bfloat16,
         quantization_config=quantization_config,
         low_cpu_mem_usage=True,
         trust_remote_code=True,
-        cache_dir=None
-)
-    vla_ref = vla_ref.to(device_id)
+        cache_dir=None,
+    )
+    vla_ref = vla_ref.to(ref_device_id)
+    vla_ref.eval()
     # Wrap VLA in PyTorch DDP Wrapper for Multi-GPU Training
 
     vla = DDP(vla, device_ids=[device_id], find_unused_parameters=True, gradient_as_bucket_view=True)
-    vla_ref= DDP(vla_ref, device_ids=[device_id], find_unused_parameters=True, gradient_as_bucket_view=True)
+    # vla_ref= DDP(vla_ref, device_ids=[ref_device_id], find_unused_parameters=True, gradient_as_bucket_view=True)
 
     # Create Optimizer =>> note that we default to a simple constant learning rate!
     trainable_params = [param for param in vla.parameters() if param.requires_grad]
@@ -774,20 +781,20 @@ def finetune(cfg: FinetuneConfig) -> None:
                             with torch.no_grad():
                                 # Calculate chosen_reference likelihood
                                 output_chosen_ref: CausalLMOutputWithPast = vla_ref(
-                                    input_ids=data_chosen["input_ids"].to(device_id),
-                                    attention_mask=data_chosen["attention_mask"].to(device_id),
-                                    pixel_values=data_chosen["pixel_values"].to(torch.bfloat16).to(device_id),
-                                    labels=data_chosen["labels"].to(device_id),
+                                    input_ids=data_chosen["input_ids"].to(ref_device_id),
+                                    attention_mask=data_chosen["attention_mask"].to(ref_device_id),
+                                    pixel_values=data_chosen["pixel_values"].to(torch.bfloat16).to(ref_device_id),
+                                    labels=data_chosen["labels"].to(ref_device_id),
                                 )
                                 labels=data_chosen["labels"]
-                                labels=labels.to(device_id)
+                                labels=labels.to(ref_device_id)
                     
                                 logits=output_chosen_ref.logits
                                 projected_patch_labels = torch.full(
                                     (labels.shape[0], 256),
                                     fill_value=-100,
                                     dtype=labels.dtype,
-                                    device=device_id,
+                                    device=ref_device_id,
                                 )
                         
                                 multimodal_labels = torch.cat([labels[:, :1], projected_patch_labels, labels[:, 1:]], dim=1)
@@ -799,20 +806,20 @@ def finetune(cfg: FinetuneConfig) -> None:
                                 )      
                                 # Calculate rejected_reference likelihood
                                 output_rejected_ref: CausalLMOutputWithPast = vla_ref(
-                                    input_ids=data_rejected["input_ids"].to(device_id),
-                                    attention_mask=data_rejected["attention_mask"].to(device_id),
-                                    pixel_values=data_rejected["pixel_values"].to(torch.bfloat16).to(device_id),
-                                    labels=data_rejected["labels"].to(device_id),
+                                    input_ids=data_rejected["input_ids"].to(ref_device_id),
+                                    attention_mask=data_rejected["attention_mask"].to(ref_device_id),
+                                    pixel_values=data_rejected["pixel_values"].to(torch.bfloat16).to(ref_device_id),
+                                    labels=data_rejected["labels"].to(ref_device_id),
                                 )
                                 labels=data_rejected["labels"]
-                                labels=labels.to(device_id)
+                                labels=labels.to(ref_device_id)
 
                                 logits=output_rejected_ref.logits
                                 projected_patch_labels = torch.full(
                                     (labels.shape[0], 256),
                                     fill_value=-100,
                                     dtype=labels.dtype,
-                                    device=device_id,
+                                    device=ref_device_id,
                                 )
 
                                 multimodal_labels = torch.cat([labels[:, :1], projected_patch_labels, labels[:, 1:]], dim=1)
@@ -830,10 +837,11 @@ def finetune(cfg: FinetuneConfig) -> None:
                                 device_id=device_id
                             )
                             #Calculate loss of this step 
-                            loss_step=0.1*(policy_chosen_logps-policy_rejected_logps-ref_chosen_logps+ref_rejected_logps)
+                            loss_step=0.1*(policy_chosen_logps.to(device_id)-policy_rejected_logps.to(device_id)
+                                           -ref_chosen_logps.to(device_id)+ref_rejected_logps.to(device_id))
                             loss_sum+=loss_step
-                            logps_chosen+=policy_chosen_logps
-                            logps_rejected+=policy_rejected_logps
+                            logps_chosen+=policy_chosen_logps.to(device_id)
+                            logps_rejected+=policy_rejected_logps.to(device_id)
                             chosen_rewards_sum+=chosen_rewards
                             rejected_rewards_sum+=rejected_rewards
                            
