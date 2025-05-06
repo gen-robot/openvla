@@ -32,8 +32,8 @@ fi
 # openvla-ecot/ecot-openvla-7b-oxe \
 if [ ${cot_full} = True ]; then
   torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
-    --vla_path /nvme_data/liangzhi/pretrained/ecot-openvla-7b-oxe/ \
-    --data_root_dir datasets \
+    --vla_path /nvme_data/embodied_agent/pretrained/ecot-openvla-7b-oxe/ \
+    --data_root_dir datasets/libero_data \
     --dataset_name ${task_name} \
     --run_root_dir checkpoints/${task_name} \
     --use_proprio ${use_proprio} \
@@ -59,8 +59,8 @@ if [ ${cot_full} = True ]; then
   #   --cot_tags ${cot_tags}
 else
   torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
-    --vla_path /nvme_data/liangzhi/pretrained/ecot-openvla-7b-oxe/ \
-    --data_root_dir datasets \
+    --vla_path /nvme_data/embodied_agent/pretrained/ecot-openvla-7b-oxe/ \
+    --data_root_dir datasets/libero_data \
     --dataset_name ${task_name} \
     --run_root_dir checkpoints/${task_name} \
     --use_proprio ${use_proprio} \

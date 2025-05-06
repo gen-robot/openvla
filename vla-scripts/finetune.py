@@ -109,6 +109,7 @@ class FinetuneConfig:
     max_steps: int = 200_000                         # Max number of training steps
     use_val_set: bool = False                        # If True, uses validation set and log validation metrics
     val_freq: int = 10_000                           # (When `use_val_set==True`) Validation set logging frequency in steps
+    generated_eval_freq: int = 200                   # Generated eval frequency
     val_time_limit: int = 180                        # (When `use_val_set==True`) Time limit for computing validation metrics
     save_freq: int = 10_000                          # Checkpoint saving frequency in steps
     save_latest_checkpoint_only: bool = False        # If True, saves only 1 checkpoint, overwriting latest checkpoint
@@ -328,6 +329,7 @@ def run_forward_pass(
     current_step=None,
     is_main_process=False,
     is_val=False,
+    do_generated_val=False,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Compute model forward pass and metrics for both training and validation.
@@ -447,37 +449,38 @@ def run_forward_pass(
         curr_action_l1_loss = compute_actions_l1_loss(
             action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
         )
-        with torch.no_grad():
-            try:
-                input_idx = 0
-                while input_idx < batch["labels"].shape[1] and batch["labels"][0, input_idx] == -100:
-                    input_idx += 1
-                pred_continuous_actions, generated_ids, predicted_action_token_ids = vla.module.predict_action_autoregressive_without_unnormalized(
-                    input_ids=batch["input_ids"][:1, :input_idx].to(device_id),
-                    attention_mask=batch["attention_mask"][:1, :input_idx].to(device_id),
-                    pixel_values=batch["pixel_values"][:1].to(torch.bfloat16).to(device_id),
-                    do_sample=False,
-                    proprio=batch["proprio"][:1] if use_proprio else None,
-                    proprio_projector=proprio_projector if use_proprio else None,
-                    noisy_action_projector=noisy_action_projector if use_diffusion else None,
-                    use_film=use_film,
-                    action_head=action_head,
-                )
-                predicted_action_token_ids = torch.tensor(predicted_action_token_ids).to(ground_truth_token_ids.device).to(ground_truth_token_ids.dtype)
-                generated_action_accuracy = compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
-                generated_l1_loss = compute_actions_l1_loss_from_action(
-                    action_tokenizer, pred_continuous_actions, ground_truth_token_ids[:1], mask=current_action_mask[:1]
-                )
-                generated_cot_accuracy = compute_token_accuracy_abs(generated_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
-                metrics.update(
-                    {
-                        "generated_action_accuracy": generated_action_accuracy.item(),
-                        "generated_action_l1_loss": generated_l1_loss.item(),
-                        "generated_cot_accuracy": generated_cot_accuracy.item(),
-                    }
-                )
-            except:
-                print("Compute accuracy error!")
+        if do_generated_val:
+            with torch.no_grad():
+                try:
+                    input_idx = 0
+                    while input_idx < batch["labels"].shape[1] and batch["labels"][0, input_idx] == -100:
+                        input_idx += 1
+                    pred_continuous_actions, generated_ids, predicted_action_token_ids = vla.module.predict_action_autoregressive_without_unnormalized(
+                        input_ids=batch["input_ids"][:1, :input_idx].to(device_id),
+                        attention_mask=batch["attention_mask"][:1, :input_idx].to(device_id),
+                        pixel_values=batch["pixel_values"][:1].to(torch.bfloat16).to(device_id),
+                        do_sample=False,
+                        proprio=batch["proprio"][:1] if use_proprio else None,
+                        proprio_projector=proprio_projector if use_proprio else None,
+                        noisy_action_projector=noisy_action_projector if use_diffusion else None,
+                        use_film=use_film,
+                        action_head=action_head,
+                    )
+                    predicted_action_token_ids = torch.tensor(predicted_action_token_ids).to(ground_truth_token_ids.device).to(ground_truth_token_ids.dtype)
+                    generated_action_accuracy = compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
+                    generated_l1_loss = compute_actions_l1_loss_from_action(
+                        action_tokenizer, pred_continuous_actions, ground_truth_token_ids[:1], mask=current_action_mask[:1]
+                    )
+                    generated_cot_accuracy = compute_token_accuracy_abs(generated_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
+                    metrics.update(
+                        {
+                            "generated_action_accuracy": generated_action_accuracy.item(),
+                            "generated_action_l1_loss": generated_l1_loss.item(),
+                            "generated_cot_accuracy": generated_cot_accuracy.item(),
+                        }
+                    )
+                except:
+                    print("Compute accuracy error!")
         metrics.update(
             {
                 "loss_value": loss.item(),  # Detached value for logging
@@ -876,6 +879,7 @@ def run_validation(
                 current_step=log_step,
                 is_main_process=distributed_state.is_main_process,
                 is_val=True,
+                do_generated_val=True,
             )
 
             # Add the loss value to the metrics
@@ -1262,6 +1266,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
             # Compute training metrics and loss
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
+            do_generated_val = log_step % cfg.generated_eval_freq == 0
             loss, metrics = run_forward_pass(
                 cfg=cfg,
                 batch_idx=batch_idx,
@@ -1285,6 +1290,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 cot_log_dir=cot_log_dir,
                 current_step=log_step,
                 is_main_process=distributed_state.is_main_process,
+                do_generated_val=do_generated_val,
             )
 
             # Normalize loss to account for gradient accumulation
