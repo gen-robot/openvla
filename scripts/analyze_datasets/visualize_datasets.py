@@ -131,7 +131,7 @@ def main(cfg: Config):
 
         for i, step_data in enumerate(ep_data):
             # Liangzhi: speed up test
-            if i % 10 != 0:
+            if i % 3 != 0:
                 continue
             
             if file_name is None:
@@ -158,7 +158,9 @@ def main(cfg: Config):
             if len(reasoning) > 0:
                 reasoning_parts = reasoning.split("@")
                 tags = [(reasoning_parts[i], reasoning_parts[i + 1].rstrip()) for i in range(0, len(reasoning_parts), 2)]
-                reasoning_text = "".join([f" {tag[0]} {tag[1]}" for tag in tags])
+                # if tag[0] != "MOVE:" and tag[0] != "MOVE REASONING:":
+                #     continue
+                reasoning_text = "".join([(f" {tag[0]} {tag[1]}" if (tag[0] == "MOVE:" or tag[0] == "MOVE REASONING:") else "") for tag in tags])
             else:
                 reasoning_text = ""
 

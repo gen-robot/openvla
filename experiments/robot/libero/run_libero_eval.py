@@ -20,6 +20,8 @@ import tqdm
 from libero.libero import benchmark
 from scripts.generate_embodied_data.online_annotator import OnlineAnnotator
 import wandb
+import h5py
+import cv2
 
 # Append current directory so that interpreter can find experiments.robot
 sys.path.append("../..")
@@ -88,6 +90,8 @@ class GenerateConfig:
     #################################################################################################################
     model_family: str = "openvla"                    # Model family
     pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
+    save_data_dir: str = ""                          # For data saving
+    save_unit_id: str = ""
     use_local_vla: bool = True                      # If True, uses local VLA model
 
     window_size: Optional[int] = None                # If provided, uses a sliding window of this size to chunk the past observations and actions
@@ -116,7 +120,8 @@ class GenerateConfig:
     #################################################################################################################
     task_suite_name: str = TaskSuite.LIBERO_SPATIAL  # Task suite
     num_steps_wait: int = 10                         # Number of steps to wait for objects to stabilize in sim
-    num_trials_per_task: int = 50                    # Number of rollouts per task
+    num_trials_per_task: int = 5                    # Number of rollouts per task
+    initial_state_id: int = 0                        # For multi eval
     initial_states_path: str = "DEFAULT"             # "DEFAULT", or path to initial states JSON file
     env_img_res: int = 256                           # Resolution for environment images (not policy input resolution)
 
@@ -282,6 +287,62 @@ def process_action(action, model_family):
 
     return action
 
+def save_data(save_path, count, obs_image_array, wrist_image_array, state_array, joint_state_array, action_array, cot_array, success):
+    file_path = os.path.join(save_path, 'motionplanning', 'data.h5')
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
+    count -= 1
+
+    if count == 0:
+        with h5py.File(file_path, 'w') as f:
+            traj = f.create_group(f'traj_{count}')
+
+            traj.create_group("obs").create_group("agent").create_dataset('state', data=np.array(state_array))
+            traj["obs"]["agent"].create_dataset('joint_state', data=np.array(joint_state_array))
+            string_dt = h5py.string_dtype(encoding='utf-8')
+            traj.create_dataset('cot', data=np.array(cot_array, dtype=object), dtype=string_dt)
+            traj.create_dataset('actions', data=np.array(action_array))
+            traj.create_dataset('success', data=np.array(success))
+    else:
+        with h5py.File(file_path, 'a') as f:
+            traj = f.create_group(f'traj_{count}')
+
+            traj.create_group("obs").create_group("agent").create_dataset('state', data=np.array(state_array))
+            traj["obs"]["agent"].create_dataset('joint_state', data=np.array(joint_state_array))
+            string_dt = h5py.string_dtype(encoding='utf-8')
+            traj.create_dataset('cot', data=np.array(cot_array, dtype=object), dtype=string_dt)
+            traj.create_dataset('actions', data=np.array(action_array))
+            traj.create_dataset('success', data=np.array(success))
+    
+    count_head = count // 100
+    count_tail = count % 100
+    image_save_path = os.path.join(save_path, 'full', str(count_head), str(count_tail))
+
+    if not os.path.exists(image_save_path):
+        os.makedirs(image_save_path)
+    else:
+        for f in os.listdir(image_save_path):
+            file_path = os.path.join(image_save_path, f)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+
+    for i, img in enumerate(obs_image_array):
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        cv2.imwrite(os.path.join(image_save_path, f"{i}.png"), img_rgb)
+
+    image_save_path = os.path.join(save_path, 'wrist', str(count_head), str(count_tail))
+    if not os.path.exists(image_save_path):
+        os.makedirs(image_save_path)
+    else:
+        for f in os.listdir(image_save_path):
+            file_path = os.path.join(image_save_path, f)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+
+    for i, img in enumerate(wrist_image_array):
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        cv2.imwrite(os.path.join(image_save_path, f"{i}.png"), img_rgb)
+
 
 def run_episode(
     cfg: GenerateConfig,
@@ -296,6 +357,7 @@ def run_episode(
     initial_state=None,
     log_file=None,
     gemini_cot_annotator=None,
+    total_count=0,
 ):
     """Run a single episode in the environment."""
     # Reset environment
@@ -320,6 +382,13 @@ def run_episode(
     cot_images = []
     max_steps = TASK_MAX_STEPS[cfg.task_suite_name]
 
+    save_action_array = []
+    save_state_array = []
+    save_joint_state_array = []
+    save_obs_image_array = []
+    save_wrist_image_array = []
+    cot_array = []
+
     # Run episode
     success = False
     try:
@@ -334,6 +403,11 @@ def run_episode(
             observation, img = prepare_observation(obs, resize_size)
             replay_images.append(img)
 
+            save_joint_state_array.append(obs["robot0_joint_pos"])
+            save_obs_image_array.append(obs["agentview_image"])
+            save_wrist_image_array.append(obs["robot0_eye_in_hand_image"])
+            save_state_array.append(observation["state"])
+
             # Query model to get action
             actions, generated_ids = get_action(
                 cfg,
@@ -347,6 +421,7 @@ def run_episode(
                 use_film=cfg.use_film,
                 enable_cot=cfg.enable_cot,
                 gemini_cot_annotator=gemini_cot_annotator,
+                gt_reasoning_text="", #"MOVE REASONING:"
             )
             # If action queue is empty, requery model
             if len(action_queue) == 0:
@@ -358,6 +433,9 @@ def run_episode(
                         generated_text = generated_ids
                     else:
                         generated_text = processor.batch_decode(generated_ids)[0]
+                    
+                    cot_array.append(generated_text)
+
                     print("Generated text: ", generated_text)
                     vla_image = visualize_reasoning(observation["full_image"], task_description, generated_text)
                     cot_images.append(vla_image)
@@ -370,6 +448,8 @@ def run_episode(
             # Process action
             action = process_action(action, cfg.model_family)
 
+            save_action_array.append(action)
+
             # Execute action in environment
             obs, reward, done, info = env.step(action.tolist())
             if done:
@@ -380,7 +460,22 @@ def run_episode(
     except Exception as e:
         log_message(f"Episode error: {e}", log_file)
 
-    return success, replay_images, cot_images
+    save_dir = f"{cfg.save_data_dir}/{cfg.save_unit_id}/{task_description}/"
+    os.makedirs(save_dir, exist_ok=True)
+
+    if cfg.save_data_dir != "":
+        total_count += 1
+        save_data(save_dir, 
+                  total_count, 
+                  save_obs_image_array, 
+                  save_wrist_image_array, 
+                  save_state_array, 
+                  save_joint_state_array, 
+                  save_action_array,
+                  cot_array, 
+                  success)
+
+    return success, replay_images, cot_images, total_count
 
 
 def run_task(
@@ -397,6 +492,7 @@ def run_task(
     total_successes=0,
     log_file=None,
     gemini_cot_annotator=None,
+    total_count=0,
 ):
     """Run evaluation for a single task."""
     # Get task
@@ -410,7 +506,7 @@ def run_task(
 
     # Start episodes
     task_episodes, task_successes = 0, 0
-    for episode_idx in tqdm.tqdm(range(cfg.num_trials_per_task)):
+    for episode_idx in tqdm.tqdm(range(cfg.initial_state_id * cfg.num_trials_per_task, (cfg.initial_state_id + 1) * cfg.num_trials_per_task)):
         log_message(f"\nTask: {task_description}", log_file)
 
         # Handle initial state
@@ -433,7 +529,7 @@ def run_task(
         log_message(f"Starting episode {task_episodes + 1}...", log_file)
 
         # Run episode
-        success, replay_images, cot_images = run_episode(
+        success, replay_images, cot_images, total_count = run_episode(
             cfg,
             env,
             task_description,
@@ -446,6 +542,7 @@ def run_task(
             initial_state,
             log_file,
             gemini_cot_annotator,
+            total_count, 
         )
 
         # Update counters

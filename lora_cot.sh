@@ -16,23 +16,24 @@ is_debug=False
 enable_cot=True
 use_lora=True
 cot_full=$1
-cot_tags="move_reason,move"
+cot_tags="task"
 
 # if is_debug is True, set num_gpus to 1, set project name to OpenVLA-debug
 if [ ${is_debug} = True ]; then
     num_gpus=1
     project_name="OpenVLA-debug"
-# elif [ ${enable_cot} = True ]; then
-#     num_gpus=8
-#     project_name="VLA-Reasoning"
+elif [ ${enable_cot} = True ]; then
+    num_gpus=4
+    project_name="VLA-Reasoning"
 else
     num_gpus=4
     project_name="VLA-Reasoning"
 fi
 # openvla-ecot/ecot-openvla-7b-oxe \
+
 if [ ${cot_full} = True ]; then
   torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
-    --vla_path /nvme_data/embodied_agent/pretrained/ecot-openvla-7b-oxe/ \
+    --vla_path /nvme_data/liangzhi/pretrained/ecot-openvla-7b-oxe/ \
     --data_root_dir datasets/libero_data \
     --dataset_name ${task_name} \
     --run_root_dir checkpoints/${task_name} \
@@ -59,7 +60,7 @@ if [ ${cot_full} = True ]; then
   #   --cot_tags ${cot_tags}
 else
   torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
-    --vla_path /nvme_data/embodied_agent/pretrained/ecot-openvla-7b-oxe/ \
+    --vla_path /nvme_data/liangzhi/pretrained/ecot-openvla-7b-oxe/ \
     --data_root_dir datasets/libero_data \
     --dataset_name ${task_name} \
     --run_root_dir checkpoints/${task_name} \
