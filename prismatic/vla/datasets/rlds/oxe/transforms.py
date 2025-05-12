@@ -933,6 +933,7 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "libero_object_no_noops": libero_dataset_transform,
     "libero_goal_no_noops": libero_dataset_transform,
     "libero_10_no_noops": libero_dataset_transform,
+    "libero_correction_object_no_noops": libero_dataset_transform,
     ### Cobot
     "cobot_rlds_dataset": cobot_dataset_transform,
     "cobot_future_dataset": cobot_dataset_transform,
