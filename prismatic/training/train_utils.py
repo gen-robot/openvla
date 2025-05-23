@@ -67,10 +67,10 @@ def compute_token_accuracy(predicted_token_ids, ground_truth_token_ids, mask):
     return accuracy
 
 def compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids, mask):
-    if predicted_action_token_ids.shape[1] != ground_truth_token_ids[mask].shape[1]:
+    if predicted_action_token_ids.shape[0] != ground_truth_token_ids[mask].shape[0]:
         print("Error: Shape not match!")
         return torch.tensor(0)
-    correct_preds = (predicted_token_ids == ground_truth_token_ids[mask])
+    correct_preds = (predicted_action_token_ids == ground_truth_token_ids[mask])
     accuracy = correct_preds.sum().float() / mask.sum().float()
     return accuracy
 
@@ -102,5 +102,6 @@ def compute_actions_l1_loss_from_action(action_tokenizer, pred_continuous_action
     true_continuous_actions = torch.tensor(
         action_tokenizer.decode_token_ids_to_actions(ground_truth_token_ids[mask].cpu().numpy())
     )
+    pred_continuous_actions = torch.tensor(pred_continuous_actions[0]).to(true_continuous_actions.dtype).to(true_continuous_actions.device)
     l1_loss = torch.nn.functional.l1_loss(pred_continuous_actions, true_continuous_actions)
     return l1_loss
