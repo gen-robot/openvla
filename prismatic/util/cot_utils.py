@@ -39,9 +39,9 @@ class CotTag(enum.Enum):
     RELEVANT_OBJECTS = "RELEVANT OBJECTS:"
     SUBTASK_REASONING = "SUBTASK REASONING:"
     SUBTASK = "SUBTASK:"
+    GRIPPER_POSITION = "GRIPPER POSITION:"
     MOVE_REASONING = "MOVE REASONING:"
     MOVE = "MOVE:"
-    GRIPPER_POSITION = "GRIPPER POSITION:"
     ACTION = "ACTION:"
 
 
@@ -54,12 +54,12 @@ def get_cot_tags_list():
         CotTag.TASK.value,
         CotTag.PLAN.value,
         CotTag.VISIBLE_OBJECTS.value,
-        # CotTag.RELEVANT_OBJECTS.value,
+        CotTag.RELEVANT_OBJECTS.value,
         CotTag.SUBTASK_REASONING.value,
         CotTag.SUBTASK.value,
+        CotTag.GRIPPER_POSITION.value,
         CotTag.MOVE_REASONING.value,
         CotTag.MOVE.value,
-        CotTag.GRIPPER_POSITION.value,
         CotTag.ACTION.value,
     ]
 

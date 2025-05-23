@@ -25,12 +25,12 @@ if [ ${is_debug} = True ]; then
 #     num_gpus=8
 #     project_name="VLA-Reasoning"
 else
-    num_gpus=4
+    num_gpus=8
     project_name="VLA-Reasoning"
 fi
 # openvla-ecot/ecot-openvla-7b-oxe \
 torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
-  --vla_path openvla-ecot/ecot-openvla-7b-oxe \
+  --vla_path /root/arm_ws/EmbodiedAgent/quick_jump/openvla/checkpoints/libero_object_no_noops/oft+g8tb32+openvla-7b+libero_object_no_noops+b4+lr-0.0005+chunk-1+cot--55000_chkpt \
   --data_root_dir datasets/libero_data \
   --dataset_name ${task_name} \
   --run_root_dir checkpoints/${task_name} \
@@ -53,5 +53,7 @@ torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetu
   --num_actions_chunk ${num_actions_chunk} \
   --use_val_set True \
   --save_freq 5000 \
-  --val_freq 1000 
+  --val_freq 1000 \
+  --resume True \
+  --resume_step 55000
 #   --cot_tags ${cot_tags}
