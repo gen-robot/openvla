@@ -1,5 +1,10 @@
 mode=$1
 ckpt_path=$2
+initial_state_id=$3
+num_trials_per_task=$4
+save_unit_id=$5
+
+save_dir="/nvme_data/liangzhi/datasets/libero-eval-save"
 
 # mode should be one of: spatial, object, goal, 10
 if [ "$mode" != "spatial" ] && [ "$mode" != "object" ] && [ "$mode" != "goal" ] && [ "$mode" != "10" ]; then
@@ -34,7 +39,11 @@ if [[ "$ckpt_path" == *"cot"* ]]; then
     --num_open_loop_steps 1 \
     --num_actions_chunk 1 \
     --enable_cot True \
-    --use_gemini_cot False
+    --use_gemini_cot False \
+    --initial_state_id ${initial_state_id} \
+    --num_trials_per_task ${num_trials_per_task} \
+    --save_data_dir ${save_dir} \
+    --save_unit_id ${save_unit_id}
 else
   python experiments/robot/libero/run_libero_eval.py \
     --task_suite_name libero_${mode} \

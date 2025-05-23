@@ -176,6 +176,10 @@ def make_dataset_from_rlds(
         if standardize_fn is not None:
             traj = standardize_fn(traj)
 
+        is_correction = None
+        if "is_correction" in traj.keys():
+            is_correction = traj["is_correction"]
+
         if not all(k in traj for k in REQUIRED_KEYS):
             raise ValueError(
                 f"Trajectory is missing keys: {REQUIRED_KEYS - set(traj.keys())}. " "Did you write a `standardize_fn`?"
@@ -251,8 +255,9 @@ def make_dataset_from_rlds(
             "dataset_name": tf.repeat(name, traj_len),
             **metadata_dict,
         }
-        if enable_cot:
-            traj["reasoning"] = reasonings
+
+        if is_correction is not None:
+            traj["is_correction"] = tf.cast(is_correction, tf.bool)
 
         if absolute_action_mask is not None:
             if len(absolute_action_mask) != traj["action"].shape[-1]:

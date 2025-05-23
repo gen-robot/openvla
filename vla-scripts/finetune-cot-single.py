@@ -109,7 +109,6 @@ class FinetuneConfig:
     max_steps: int = 200_000                         # Max number of training steps
     use_val_set: bool = False                        # If True, uses validation set and log validation metrics
     val_freq: int = 10_000                           # (When `use_val_set==True`) Validation set logging frequency in steps
-    generated_eval_freq: int = 200                   # Generated eval frequency
     val_time_limit: int = 180                        # (When `use_val_set==True`) Time limit for computing validation metrics
     save_freq: int = 10_000                          # Checkpoint saving frequency in steps
     save_latest_checkpoint_only: bool = False        # If True, saves only 1 checkpoint, overwriting latest checkpoint
@@ -327,9 +326,7 @@ def run_forward_pass(
     enable_cot=False,
     cot_log_dir=None,
     current_step=None,
-    is_main_process=False,
     is_val=False,
-    do_generated_val=False,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Compute model forward pass and metrics for both training and validation.
@@ -352,7 +349,6 @@ def run_forward_pass(
         num_diffusion_steps (int): Number of diffusion steps (only used for diffusion).
         cot_log_dir (str): Directory to save text logs for CoT (optional).
         current_step (int): Current training step (for logging).
-        is_main_process (bool): Whether this is the main process (to avoid duplicate logs in distributed training).
 
     Returns:
         tuple: (loss, metrics_dict)
@@ -435,7 +431,7 @@ def run_forward_pass(
             log_dir=cot_log_dir,
             step=current_step,
             batch_idx=batch_idx,
-            is_main_process=is_main_process,
+            is_main_process=True,
             mode="val" if is_val else "train"
         )
         metrics.update(cot_metrics)
@@ -449,38 +445,37 @@ def run_forward_pass(
         curr_action_l1_loss = compute_actions_l1_loss(
             action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
         )
-        if do_generated_val:
-            with torch.no_grad():
-                try:
-                    input_idx = 0
-                    while input_idx < batch["labels"].shape[1] and batch["labels"][0, input_idx] == -100:
-                        input_idx += 1
-                    pred_continuous_actions, generated_ids, predicted_action_token_ids = vla.module.predict_action_autoregressive_without_unnormalized(
-                        input_ids=batch["input_ids"][:1, :input_idx].to(device_id),
-                        attention_mask=batch["attention_mask"][:1, :input_idx].to(device_id),
-                        pixel_values=batch["pixel_values"][:1].to(torch.bfloat16).to(device_id),
-                        do_sample=False,
-                        proprio=batch["proprio"][:1] if use_proprio else None,
-                        proprio_projector=proprio_projector if use_proprio else None,
-                        noisy_action_projector=noisy_action_projector if use_diffusion else None,
-                        use_film=use_film,
-                        action_head=action_head,
-                    )
-                    predicted_action_token_ids = torch.tensor(predicted_action_token_ids).to(ground_truth_token_ids.device).to(ground_truth_token_ids.dtype)
-                    generated_action_accuracy = compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
-                    generated_l1_loss = compute_actions_l1_loss_from_action(
-                        action_tokenizer, pred_continuous_actions, ground_truth_token_ids[:1], mask=current_action_mask[:1]
-                    )
-                    generated_cot_accuracy = compute_token_accuracy_abs(generated_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
-                    metrics.update(
-                        {
-                            "generated_action_accuracy": generated_action_accuracy.item(),
-                            "generated_action_l1_loss": generated_l1_loss.item(),
-                            "generated_cot_accuracy": generated_cot_accuracy.item(),
-                        }
-                    )
-                except:
-                    print("Compute accuracy error!")
+        with torch.no_grad():
+            try:
+                input_idx = 0
+                while input_idx < batch["labels"].shape[1] and batch["labels"][0, input_idx] == -100:
+                    input_idx += 1
+                pred_continuous_actions, generated_ids, predicted_action_token_ids = vla.predict_action_autoregressive_without_unnormalized(
+                    input_ids=batch["input_ids"][:1, :input_idx].to(device_id),
+                    attention_mask=batch["attention_mask"][:1, :input_idx].to(device_id),
+                    pixel_values=batch["pixel_values"][:1].to(torch.bfloat16).to(device_id),
+                    do_sample=False,
+                    proprio=batch["proprio"][:1] if use_proprio else None,
+                    proprio_projector=proprio_projector if use_proprio else None,
+                    noisy_action_projector=noisy_action_projector if use_diffusion else None,
+                    use_film=use_film,
+                    action_head=action_head,
+                )
+                predicted_action_token_ids = torch.tensor(predicted_action_token_ids).to(ground_truth_token_ids.device).to(ground_truth_token_ids.dtype)
+                generated_action_accuracy = compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
+                generated_l1_loss = compute_actions_l1_loss_from_action(
+                    action_tokenizer, pred_continuous_actions, ground_truth_token_ids[:1], mask=current_action_mask[:1]
+                )
+                generated_cot_accuracy = compute_token_accuracy_abs(generated_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
+                metrics.update(
+                    {
+                        "generated_action_accuracy": generated_action_accuracy.item(),
+                        "generated_action_l1_loss": generated_l1_loss.item(),
+                        "generated_cot_accuracy": generated_cot_accuracy.item(),
+                    }
+                )
+            except:
+                print("Compute accuracy error!")
         metrics.update(
             {
                 "loss_value": loss.item(),  # Detached value for logging
@@ -718,7 +713,6 @@ def save_training_checkpoint(
     noisy_action_projector,
     action_head,
     train_dataset,
-    distributed_state,
 ) -> None:
     """
     Save all training checkpoints including model components, LoRA adapter, and dataset statistics.
@@ -733,7 +727,6 @@ def save_training_checkpoint(
         noisy_action_projector (nn.Module): Noisy action projector module (only used for diffusion).
         action_head (nn.Module): Action head module.
         train_dataset (RLDSDataset): Training dataset.
-        distributed_state (PartialState): Distributed training state.
 
     Returns:
         None.
@@ -751,41 +744,38 @@ def save_training_checkpoint(
     adapter_dir = checkpoint_dir / "lora_adapter"
 
     # Create directories and save dataset statistics (main process only)
-    if distributed_state.is_main_process:
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        os.makedirs(adapter_dir, exist_ok=True)
-        save_dataset_statistics(train_dataset.dataset_statistics, checkpoint_dir)
-        print(f"Saving Model Checkpoint for Step {log_step}")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    os.makedirs(adapter_dir, exist_ok=True)
+    save_dataset_statistics(train_dataset.dataset_statistics, checkpoint_dir)
+    print(f"Saving Model Checkpoint for Step {log_step}")
 
     # Wait for directories to be created
     dist.barrier()
 
-    # Save model components (main process only)
-    if distributed_state.is_main_process:
-        # Save processor and LoRA adapter
-        processor.save_pretrained(checkpoint_dir)
-        if cfg.use_lora:
-            vla.module.save_pretrained(adapter_dir)
-        else:
-            vla.module.save_pretrained(checkpoint_dir)
+    # Save processor and LoRA adapter
+    processor.save_pretrained(checkpoint_dir)
+    if cfg.use_lora:
+        vla.save_pretrained(adapter_dir)
+    else:
+        vla.save_pretrained(checkpoint_dir)
 
-        # Save other components
-        if cfg.use_proprio and proprio_projector is not None:
-            torch.save(proprio_projector.state_dict(), checkpoint_dir / f"proprio_projector--{checkpoint_name_suffix}")
+    # Save other components
+    if cfg.use_proprio and proprio_projector is not None:
+        torch.save(proprio_projector.state_dict(), checkpoint_dir / f"proprio_projector--{checkpoint_name_suffix}")
 
-        if cfg.use_diffusion and noisy_action_projector is not None:
-            torch.save(
-                noisy_action_projector.state_dict(), checkpoint_dir / f"noisy_action_projector--{checkpoint_name_suffix}"
-            )
+    if cfg.use_diffusion and noisy_action_projector is not None:
+        torch.save(
+            noisy_action_projector.state_dict(), checkpoint_dir / f"noisy_action_projector--{checkpoint_name_suffix}"
+        )
 
-        if (cfg.use_l1_regression or cfg.use_diffusion) and action_head is not None:
-            torch.save(action_head.state_dict(), checkpoint_dir / f"action_head--{checkpoint_name_suffix}")
+    if (cfg.use_l1_regression or cfg.use_diffusion) and action_head is not None:
+        torch.save(action_head.state_dict(), checkpoint_dir / f"action_head--{checkpoint_name_suffix}")
 
-        if cfg.use_film:
-            # To be safe, just save the entire vision backbone (not just FiLM components)
-            torch.save(
-                vla.module.vision_backbone.state_dict(), checkpoint_dir / f"vision_backbone--{checkpoint_name_suffix}"
-            )
+    if cfg.use_film:
+        # To be safe, just save the entire vision backbone (not just FiLM components)
+        torch.save(
+            vla.vision_backbone.state_dict(), checkpoint_dir / f"vision_backbone--{checkpoint_name_suffix}"
+        )
 
     # Wait for model components to be saved
     dist.barrier()
@@ -799,9 +789,8 @@ def save_training_checkpoint(
         merged_vla = PeftModel.from_pretrained(base_vla, adapter_dir)
         merged_vla = merged_vla.merge_and_unload()
 
-        if distributed_state.is_main_process:
-            merged_vla.save_pretrained(checkpoint_dir)
-            print(f"Saved merged model for Step {log_step} at: {checkpoint_dir}")
+        merged_vla.save_pretrained(checkpoint_dir)
+        print(f"Saved merged model for Step {log_step} at: {checkpoint_dir}")
 
         # Wait for merged model to be saved
         dist.barrier()
@@ -819,7 +808,6 @@ def run_validation(
     cfg,
     num_patches,
     log_step,
-    distributed_state,
     val_time_limit,
     enable_cot,
     cot_log_dir=None,
@@ -838,7 +826,6 @@ def run_validation(
         cfg (FinetuneConfig): Training configuration.
         num_patches (int): Number of vision patches.
         log_step (int): Current logging step.
-        distributed_state (PartialState): Distributed training state.
         val_time_limit (int): Time limit for computing validation metrics.
         enable_cot (bool): Whether to use COT for reasoning.
         cot_log_dir (str): Directory to save text logs for CoT (optional).
@@ -877,9 +864,7 @@ def run_validation(
                 enable_cot=cfg.enable_cot,
                 cot_log_dir=cot_log_dir,
                 current_step=log_step,
-                is_main_process=distributed_state.is_main_process,
                 is_val=True,
-                do_generated_val=True,
             )
 
             # Add the loss value to the metrics
@@ -901,12 +886,10 @@ def run_validation(
     # Add batch count to metrics
     avg_val_metrics["val_batches_count"] = val_batches_count
 
-    # Log validation metrics to W&B
-    if distributed_state.is_main_process:
-        log_metrics_to_wandb(avg_val_metrics, "VLA Val", log_step, wandb)
+    log_metrics_to_wandb(avg_val_metrics, "VLA Val", log_step, wandb)
 
     # Generate plots periodically during training (every 5 validation runs)
-    if cfg.enable_cot and distributed_state.is_main_process and cot_log_dir and log_step % (cfg.val_freq * 5) == 0:
+    if cfg.enable_cot and cot_log_dir and log_step % (cfg.val_freq * 5) == 0:
         try:
             plot_cot_accuracy_curves(cot_log_dir)
             print(f"CoT accuracy curves plotted at step {log_step}")
@@ -953,10 +936,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     run_id = get_run_id(cfg) if not cfg.is_debug else "debug"
 
     # GPU setup
-    distributed_state = PartialState()
-    device_id = distributed_state.local_process_index
-    torch.cuda.set_device(device_id)
-    torch.cuda.empty_cache()
+    device_id = torch.device("cuda")
 
     # Get distributed training parameters from environment variables
     # These are set by torchrun when launching the script
@@ -988,11 +968,11 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Create a directory for CoT logs if needed
     cot_log_dir = os.path.join(run_dir, "cot_logs") if cfg.enable_cot else None
-    if cot_log_dir and distributed_state.is_main_process:
+    if cot_log_dir:
         os.makedirs(cot_log_dir, exist_ok=True)
 
     # Initialize wandb logging
-    if distributed_state.is_main_process and not cfg.is_debug:
+    if not cfg.is_debug:
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=run_id)
 
     # Print detected constants
@@ -1027,10 +1007,8 @@ def finetune(cfg: FinetuneConfig) -> None:
         AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
         AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
 
-    # Update config.json and sync model files
-    if distributed_state.is_main_process:
-        update_auto_map(cfg.vla_path)
-        check_model_logic_mismatch(cfg.vla_path)
+    update_auto_map(cfg.vla_path)
+    check_model_logic_mismatch(cfg.vla_path)
 
     # Wait for model files to be synced
     dist.barrier()
@@ -1083,7 +1061,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
 
     # Wrap VLA with DDP
-    vla = wrap_ddp(vla, device_id, find_unused=True)
+    # vla = wrap_ddp(vla, device_id, find_unused=True)
 
     # If applicable, instantiate proprio projector
     if cfg.use_proprio:
@@ -1092,7 +1070,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             "proprio_projector",
             cfg,
             device_id,
-            {"llm_dim": vla.module.llm_dim, "proprio_dim": PROPRIO_DIM},
+            {"llm_dim": vla.llm_dim, "proprio_dim": PROPRIO_DIM},
         )
 
     # If applicable, instantiate continuous action head for L1 regression
@@ -1103,8 +1081,8 @@ def finetune(cfg: FinetuneConfig) -> None:
             cfg,
             device_id,
             {
-                "input_dim": vla.module.llm_dim,
-                "hidden_dim": vla.module.llm_dim,
+                "input_dim": vla.llm_dim,
+                "hidden_dim": vla.llm_dim,
                 "action_dim": ACTION_DIM,
                 "num_actions_chunk": num_actions_chunk,
             },
@@ -1119,8 +1097,8 @@ def finetune(cfg: FinetuneConfig) -> None:
             cfg,
             device_id,
             {
-                "input_dim": vla.module.llm_dim,
-                "hidden_dim": vla.module.llm_dim,
+                "input_dim": vla.llm_dim,
+                "hidden_dim": vla.llm_dim,
                 "action_dim": ACTION_DIM,
                 "num_actions_chunk": num_actions_chunk,
                 "num_diffusion_steps": cfg.num_diffusion_steps,
@@ -1128,11 +1106,11 @@ def finetune(cfg: FinetuneConfig) -> None:
             to_bf16=True,
         )
         noisy_action_projector = init_module(
-            NoisyActionProjector, "noisy_action_projector", cfg, device_id, {"llm_dim": vla.module.llm_dim}
+            NoisyActionProjector, "noisy_action_projector", cfg, device_id, {"llm_dim": vla.llm_dim}
         )
 
     # Get number of vision patches
-    NUM_PATCHES = vla.module.vision_backbone.get_num_patches() * vla.module.vision_backbone.get_num_images_in_input()
+    NUM_PATCHES = vla.vision_backbone.get_num_patches() * vla.vision_backbone.get_num_images_in_input()
     # If we have proprio inputs, a single proprio embedding is appended to the end of the vision patch embeddings
     if cfg.use_proprio:
         NUM_PATCHES += 1
@@ -1197,7 +1175,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         cfg.data_root_dir,
         cfg.dataset_name,
         batch_transform,
-        resize_resolution=tuple(vla.module.config.image_sizes),
+        resize_resolution=tuple(vla.config.image_sizes),
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
         window_size=cfg.window_size,
@@ -1210,7 +1188,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             cfg.data_root_dir,
             cfg.dataset_name,
             batch_transform,
-            resize_resolution=tuple(vla.module.config.image_sizes),
+            resize_resolution=tuple(vla.config.image_sizes),
             shuffle_buffer_size=cfg.shuffle_buffer_size // 10,
             image_aug=cfg.image_aug,
             train=False,
@@ -1221,8 +1199,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         )
 
     # [Important] Save dataset statistics so that we can unnormalize actions during inference
-    if distributed_state.is_main_process:
-        save_dataset_statistics(train_dataset.dataset_statistics, run_dir)
+    save_dataset_statistics(train_dataset.dataset_statistics, run_dir)
 
     # Create collator and dataloader
     collator = PaddedCollatorForActionPrediction(
@@ -1266,7 +1243,6 @@ def finetune(cfg: FinetuneConfig) -> None:
 
             # Compute training metrics and loss
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
-            do_generated_val = log_step % cfg.generated_eval_freq == 0
             loss, metrics = run_forward_pass(
                 cfg=cfg,
                 batch_idx=batch_idx,
@@ -1289,8 +1265,6 @@ def finetune(cfg: FinetuneConfig) -> None:
                 enable_cot=cfg.enable_cot,
                 cot_log_dir=cot_log_dir,
                 current_step=log_step,
-                is_main_process=distributed_state.is_main_process,
-                do_generated_val=do_generated_val,
             )
 
             # Normalize loss to account for gradient accumulation
@@ -1315,7 +1289,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
             # Push Metrics to W&B (every wandb_log_freq gradient steps)
             log_step = gradient_step_idx if not cfg.resume else cfg.resume_step + gradient_step_idx
-            if distributed_state.is_main_process and log_step % cfg.wandb_log_freq == 0:
+            if log_step % cfg.wandb_log_freq == 0:
                 log_metrics_to_wandb(smoothened_metrics, "VLA Train", log_step, wandb)
 
             # [If applicable] Linearly warm up learning rate from 10% to 100% of original
@@ -1325,7 +1299,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 for param_group in optimizer.param_groups:
                     param_group["lr"] = current_lr
 
-            if distributed_state.is_main_process and gradient_step_idx % cfg.wandb_log_freq == 0:
+            if gradient_step_idx % cfg.wandb_log_freq == 0:
                 # Log the learning rate
                 # Make sure to do this AFTER any learning rate modifications (e.g., warmup/decay)
                 wandb.log(
@@ -1354,7 +1328,6 @@ def finetune(cfg: FinetuneConfig) -> None:
                     noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
                     action_head=action_head if (cfg.use_l1_regression or cfg.use_diffusion) else None,
                     train_dataset=train_dataset,
-                    distributed_state=distributed_state,
                 )
 
             # Test model on validation set
@@ -1371,7 +1344,6 @@ def finetune(cfg: FinetuneConfig) -> None:
                     cfg=cfg,
                     num_patches=NUM_PATCHES,
                     log_step=log_step,
-                    distributed_state=distributed_state,
                     val_time_limit=cfg.val_time_limit,
                     enable_cot=cfg.enable_cot,
                     cot_log_dir=cot_log_dir,
@@ -1385,7 +1357,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 break
 
         # At the end of the training loop, before saving the final model
-        if cfg.enable_cot and distributed_state.is_main_process and cot_log_dir:
+        if cfg.enable_cot and cot_log_dir:
             plot_cot_accuracy_curves(cot_log_dir)
             print(f"Final CoT accuracy curves plotted and saved to {cot_log_dir}/plots")
 
@@ -1400,7 +1372,6 @@ def finetune(cfg: FinetuneConfig) -> None:
             noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
             action_head=action_head if (cfg.use_l1_regression or cfg.use_diffusion) else None,
             train_dataset=train_dataset,
-            distributed_state=distributed_state,
         )
 
 

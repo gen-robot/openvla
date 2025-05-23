@@ -108,6 +108,7 @@ def get_action(
     use_film: bool = False,
     enable_cot: bool = False,
     gemini_cot_annotator: Optional[Any] = None,
+    gt_reasoning_text: Optional[str] = None,
 ) -> Union[List[np.ndarray], np.ndarray]:
     """
     Query the model to get action predictions.
@@ -144,6 +145,7 @@ def get_action(
                 use_film=use_film,
                 enable_cot=enable_cot,
                 gemini_cot_annotator=gemini_cot_annotator,
+                gt_reasoning_text=gt_reasoning_text,
             )
         else:
             raise ValueError(f"Unsupported model family: {cfg.model_family}")
