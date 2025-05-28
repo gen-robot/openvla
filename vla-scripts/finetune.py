@@ -1267,6 +1267,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             # Compute training metrics and loss
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
             do_generated_val = log_step % cfg.generated_eval_freq == 0
+
             loss, metrics = run_forward_pass(
                 cfg=cfg,
                 batch_idx=batch_idx,

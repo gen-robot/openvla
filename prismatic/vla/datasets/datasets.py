@@ -76,6 +76,7 @@ class RLDSBatchTransform:
         img = Image.fromarray(rlds_batch["observation"]["image_primary"][self.history_size])
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
         actions = rlds_batch["action"][self.history_size:]
+        # import pdb; pdb.set_trace()
         if "is_correction" in rlds_batch:
             is_correction = rlds_batch["is_correction"]
         else:
@@ -106,26 +107,26 @@ class RLDSBatchTransform:
         is_correction = True
 
         if 'reasoning' not in rlds_batch:
-            return {}
+            # return {}
             conversation = [
                 {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
                 {"from": "gpt", "value": f"{action_chunk_string}"},
             ]
         elif len(reasoning) > 0:
-            if is_correction:
-                conversation = [
-                    {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
-                    # {"from": "human", "value": f"What action should the robot take to {lang}?"},
-                    {"from": "gpt", "value": f"{reasoning} {CotTag.ACTION.value} {action_chunk_string}"},
-                ]
-            else:
-                conversation = [
-                    {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
-                    # {"from": "human", "value": f"What action should the robot take to {lang}?"},
-                    {"from": "gpt", "value": f"{reasoning}"},
-                ]
+            # if is_correction:
+            conversation = [
+                {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
+                # {"from": "human", "value": f"What action should the robot take to {lang}?"},
+                {"from": "gpt", "value": f"{reasoning} {CotTag.ACTION.value} {action_chunk_string}"},
+            ]
+            # else:
+            #     conversation = [
+            #         {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
+            #         # {"from": "human", "value": f"What action should the robot take to {lang}?"},
+            #         {"from": "gpt", "value": f"{reasoning}"},
+            #     ]
         else:
-            return {}
+            # return {}
             conversation = [
                 {"from": "human", "value": f"What action should the robot take to {lang}?"},
                 {"from": "gpt", "value": f"{CotTag.ACTION.value} {action_chunk_string}"},

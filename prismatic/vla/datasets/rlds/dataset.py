@@ -171,6 +171,8 @@ def make_dataset_from_rlds(
     else:
         reasoning_dataset = None
 
+    # import pdb; pdb.set_trace()
+
     def restructure(traj, load_cot_labels=False):
         # apply a standardization function, if provided
         if standardize_fn is not None:
@@ -258,6 +260,9 @@ def make_dataset_from_rlds(
 
         if is_correction is not None:
             traj["is_correction"] = tf.cast(is_correction, tf.bool)
+
+        if enable_cot:
+            traj["reasoning"] = reasonings
 
         if absolute_action_mask is not None:
             if len(absolute_action_mask) != traj["action"].shape[-1]:
@@ -523,6 +528,7 @@ def make_single_dataset(
         **dataset_kwargs,
         train=train,
         enable_cot=enable_cot,
+        cot_tags=cot_tags,
     )
     dataset = apply_trajectory_transforms(dataset, **traj_transform_kwargs, train=train)
     dataset = apply_frame_transforms(dataset, **frame_transform_kwargs, train=train)
@@ -591,7 +597,7 @@ def make_interleaved_dataset(
         data_kwargs = copy.deepcopy(dataset_kwargs)
         if "dataset_frame_transform_kwargs" in data_kwargs:
             data_kwargs.pop("dataset_frame_transform_kwargs")
-        _, dataset_statistics = make_dataset_from_rlds(**data_kwargs, train=train)
+        _, dataset_statistics = make_dataset_from_rlds(**data_kwargs, train=train, cot_tags=cot_tags, enable_cot=enable_cot)
         dataset_sizes.append(dataset_statistics["num_transitions"])
         all_dataset_statistics[dataset_kwargs["name"]] = dataset_statistics
 
