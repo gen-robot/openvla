@@ -1006,43 +1006,81 @@ def finetune(cfg: FinetuneConfig) -> None:
         f"{'='*50}\n"
     )
 
-    # Two options:
-    # (1) Base model is on Hugging Face Hub
-    #   - Then download it and record the path to the download directory
-    # (2) Base model is stored locally
-    #   - Then register model config in HF Auto Classes
-    # In both cases, we want to check whether any changes have been made to
-    # the `modeling_prismatic.py` file in this codebase; if so, we will copy
-    # the file to the downloaded or locally stored checkpoint directory so
-    # that the user's changes to the VLA class logic go into effect
-    if not cfg.use_local_vla and model_is_on_hf_hub(cfg.vla_path):
-        # Download model directly from Hugging Face Hub
-        vla_download_path = snapshot_download(repo_id=cfg.vla_path)
-        # Overwrite VLA path
-        cfg.vla_path = vla_download_path
-    else:
-        # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
-        AutoConfig.register("openvla", OpenVLAConfig)
-        AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
-        AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-        AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+    # IMPORTANT: Register OpenVLA classes FIRST before any file operations
+    # This ensures classes are available when HF tries to load them
+    print(f"[Rank {distributed_state.process_index}] Registering OpenVLA classes...")
+    AutoConfig.register("openvla", OpenVLAConfig)
+    AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
+    AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
+    AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+    print(f"[Rank {distributed_state.process_index}] OpenVLA classes registered successfully")
+    
+    # Ensure all processes have registered the classes
+    dist.barrier()
+    print(f"[Rank {distributed_state.process_index}] All processes have registered classes")
+    
+    # if not cfg.use_local_vla and model_is_on_hf_hub(cfg.vla_path):
+    #     # Download model directly from Hugging Face Hub
+    #     vla_download_path = snapshot_download(repo_id=cfg.vla_path)
+    #     # Overwrite VLA path
+    #     cfg.vla_path = vla_download_path
 
     # Update config.json and sync model files
     if distributed_state.is_main_process:
         update_auto_map(cfg.vla_path)
         check_model_logic_mismatch(cfg.vla_path)
 
-    # Wait for model files to be synced
+    # Wait for model files to be synced across all processes
+    # This is critical for distributed training on shared filesystems
     dist.barrier()
-
+    print(f"[Rank {distributed_state.process_index}] File synchronization completed")
+    
+    # Add additional delay to ensure file system sync (especially important for NFS/distributed filesystems)
+    time.sleep(2)
+    
+    # Verify files exist before proceeding
+    required_files = ["modeling_prismatic.py", "configuration_prismatic.py", "config.json"]
+    for file_name in required_files:
+        file_path = os.path.join(cfg.vla_path, file_name)
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Required file {file_path} not found on rank {distributed_state.process_index}")
+        print(f"[Rank {distributed_state.process_index}] Verified {file_name} exists")
+    
+    # Verify that the OpenVLAForActionPrediction class is accessible in the modeling file
+    modeling_file_path = os.path.join(cfg.vla_path, "modeling_prismatic.py")
+    try:
+        with open(modeling_file_path, 'r') as f:
+            modeling_content = f.read()
+            if "class OpenVLAForActionPrediction" not in modeling_content:
+                raise ValueError(f"OpenVLAForActionPrediction class not found in {modeling_file_path} on rank {distributed_state.process_index}")
+            print(f"[Rank {distributed_state.process_index}] Verified OpenVLAForActionPrediction class exists in modeling file")
+    except Exception as e:
+        print(f"[Rank {distributed_state.process_index}] Error verifying modeling file: {e}")
+        raise
+        
+    # Final barrier to ensure all processes have verified files
+    dist.barrier()
+    print(f"[Rank {distributed_state.process_index}] All processes verified files, proceeding to model loading")
+    
     # Load processor and VLA
-    processor = AutoProcessor.from_pretrained(cfg.vla_path, trust_remote_code=True)
-    vla = AutoModelForVision2Seq.from_pretrained(
-        cfg.vla_path,
-        torch_dtype=torch.bfloat16,
-        low_cpu_mem_usage=True,
-        trust_remote_code=True,
-    ).to(device_id)
+    print(f"[Rank {distributed_state.process_index}] Loading processor from {cfg.vla_path}")
+    processor = PrismaticProcessor.from_pretrained(cfg.vla_path, trust_remote_code=True)
+    print(f"[Rank {distributed_state.process_index}] Processor loaded successfully")
+    
+    print(f"[Rank {distributed_state.process_index}] Loading VLA model from {cfg.vla_path}")
+    try:
+        vla = OpenVLAForActionPrediction.from_pretrained(
+            cfg.vla_path,
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
+            trust_remote_code=True,
+        ).to(device_id)
+        print(f"[Rank {distributed_state.process_index}] VLA model loaded successfully")
+    except Exception as e:
+        print(f"[Rank {distributed_state.process_index}] ERROR loading VLA model: {type(e).__name__}: {e}")
+        print(f"[Rank {distributed_state.process_index}] Model path: {cfg.vla_path}")
+        print(f"[Rank {distributed_state.process_index}] Available files: {os.listdir(cfg.vla_path)}")
+        raise
 
     # Set number of images in VLA input
     vla.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
