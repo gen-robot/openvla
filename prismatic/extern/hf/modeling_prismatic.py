@@ -22,9 +22,10 @@ import timm
 import tokenizers
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import transformers
 from timm.models.vision_transformer import LayerScale
-from transformers import AutoModelForCausalLM, PretrainedConfig, PreTrainedModel
+from transformers import AutoModelForCausalLM, PretrainedConfig, PreTrainedModel, LogitsProcessor, LogitsProcessorList
 from transformers.modeling_outputs import ModelOutput
 
 from .configuration_prismatic import OpenVLAConfig, PrismaticConfig
@@ -328,10 +329,26 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             assert past_key_values is not None, "You must provide `past_key_values` during cached generation!"
             assert labels is None, "Unexpected key `labels` provided during cached generation!"
 
+            multimodal_attention_mask = None
+            new_position_ids = None
+            if attention_mask is not None:
+                projected_patch_attention_mask = torch.full(
+                    (attention_mask.shape[0], 256),
+                    fill_value=True,
+                    dtype=attention_mask.dtype,
+                    device=attention_mask.device,
+                )
+                multimodal_attention_mask = torch.cat(
+                    [attention_mask[:, :1], projected_patch_attention_mask, attention_mask[:, 1:]], dim=1
+                ) # [B, L]
+
+                new_position_ids = multimodal_attention_mask.cumsum(dim=1) - 1 # [B, L]
+                new_position_ids = new_position_ids[:, -1:] # [B, 1]
+
             language_model_output = self.language_model(
                 input_ids=input_ids,
-                attention_mask=None,
-                position_ids=None,
+                attention_mask=multimodal_attention_mask,
+                position_ids=new_position_ids,
                 past_key_values=past_key_values,
                 inputs_embeds=None,
                 labels=None,
@@ -381,14 +398,22 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             input_embeddings = self.get_input_embeddings()(input_ids)
 
             # Build Multimodal Embeddings & Attention Mask =>> Prismatic defaults to inserting after <BOS> token (1:)
+            assert torch.all(input_ids[:, 0] == 1)
             multimodal_embeddings = torch.cat(
                 [input_embeddings[:, :1, :], projected_patch_embeddings, input_embeddings[:, 1:, :]], dim=1
             )
+
             multimodal_attention_mask = None
             if attention_mask is not None:
+                assert torch.all(attention_mask[:, 0] == 1)
                 multimodal_attention_mask = torch.cat(
                     [attention_mask[:, :1], projected_patch_attention_mask, attention_mask[:, 1:]], dim=1
                 )
+
+            # position_ids
+            multimodal_position_ids = None
+            if attention_mask is not None:
+                multimodal_position_ids = multimodal_attention_mask.cumsum(dim=1) - 1
 
             # Build Labels (if specified) =>> Ignore Labels for Patch Embeddings
             multimodal_labels = None
@@ -405,7 +430,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             language_model_output = self.language_model(
                 input_ids=None,
                 attention_mask=multimodal_attention_mask,
-                position_ids=None,
+                position_ids=multimodal_position_ids,
                 past_key_values=None,
                 inputs_embeds=multimodal_embeddings,
                 labels=multimodal_labels,
@@ -537,7 +562,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         return actions
 
     def predict_action_batch(
-        self, input_ids: Optional[torch.LongTensor] = None, unnorm_key: Optional[str] = None, **kwargs: str
+            self, input_ids: Optional[torch.LongTensor] = None, unnorm_key: Optional[str] = None, **kwargs: str
     ) -> np.ndarray:
 
         batch_size = input_ids.shape[0]
@@ -553,18 +578,18 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         generated_ids = self.generate(input_ids, max_new_tokens=self.get_action_dim(unnorm_key), **kwargs)
 
         # Extract predicted action tokens and translate into (normalized) continuous actions
-        pact_token = generated_ids[:, -self.get_action_dim(unnorm_key):].cpu().numpy() # [B, dim]
-        dact = self.vocab_size - pact_token # [B, dim]
-        dact = np.clip(dact - 1, a_min=0, a_max=self.bin_centers.shape[0] - 1) # [B, dim]
+        pact_token = generated_ids[:, -self.get_action_dim(unnorm_key):].cpu().numpy()  # [B, dim]
+        dact = self.vocab_size - pact_token  # [B, dim]
+        dact = np.clip(dact - 1, a_min=0, a_max=self.bin_centers.shape[0] - 1)  # [B, dim]
         # normalized_actions = self.bin_centers[discretized_actions]
-        normalized_actions = np.asarray([self.bin_centers[da] for da in dact]) # [B, dim]
+        normalized_actions = np.asarray([self.bin_centers[da] for da in dact])  # [B, dim]
 
         # Unnormalize actions
         action_norm_stats = self.get_action_stats(unnorm_key)
-        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool)) # [dim]
-        mask = np.array(mask).reshape(1, -1).repeat(batch_size, axis=0) # [B, dim]
-        action_high = np.array(action_norm_stats["q99"]).reshape(1, -1).repeat(batch_size, axis=0) # [B, dim]
-        action_low = np.array(action_norm_stats["q01"]).reshape(1, -1).repeat(batch_size, axis=0) # [B, dim]
+        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))  # [dim]
+        mask = np.array(mask).reshape(1, -1).repeat(batch_size, axis=0)  # [B, dim]
+        action_high = np.array(action_norm_stats["q99"]).reshape(1, -1).repeat(batch_size, axis=0)  # [B, dim]
+        action_low = np.array(action_norm_stats["q01"]).reshape(1, -1).repeat(batch_size, axis=0)  # [B, dim]
         actions = np.where(
             mask,
             0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
@@ -572,6 +597,318 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         )
 
         return actions
+
+    @staticmethod
+    def _check_unnorm_key(norm_stats: Dict[str, Dict[str, Any]], unnorm_key: Optional[str]) -> str:
+        if unnorm_key is None:
+            assert len(norm_stats) == 1, (
+                f"Your model was trained on more than one dataset, "
+                f"please pass a `unnorm_key` from the following options to choose the statistics "
+                f"used for un-normalizing actions: {norm_stats.keys()}"
+            )
+            unnorm_key = next(iter(norm_stats.keys()))
+
+        assert unnorm_key in norm_stats, (
+            f"The `unnorm_key` you chose is not in the set of available dataset statistics, "
+            f"please choose from: {norm_stats.keys()}"
+        )
+        return unnorm_key
+
+    def get_action_dim(self, unnorm_key: Optional[str] = None) -> int:
+        """Get the dimensionality of the policy's action space."""
+        unnorm_key = self._check_unnorm_key(self.norm_stats, unnorm_key)
+        return len(self.norm_stats[unnorm_key]["action"]["q01"])
+
+    def get_action_stats(self, unnorm_key: Optional[str] = None) -> Dict[str, Any]:
+        """Get all the logged statistics for the given dataset."""
+        unnorm_key = self._check_unnorm_key(self.norm_stats, unnorm_key)
+        return self.norm_stats[unnorm_key]["action"]
+
+
+class AllowedTokensLogitsProcessor(LogitsProcessor):
+    def __call__(self, input_ids, scores):
+        assert len(scores.shape) == 2
+        assert scores.shape[1] >= 32000
+
+        scores[:, :32000 - 256] = -torch.inf
+        scores[:, 32000:] = -torch.inf
+
+        return scores
+
+
+class ValueHead(nn.Module):
+    def __init__(self, hidden_size):
+        super().__init__()
+        self.head_l1 = nn.Linear(hidden_size, 512)
+        self.head_act1 = nn.GELU()
+        self.head_l2 = nn.Linear(512, 128)
+        self.head_act2 = nn.GELU()
+        self.head_l3 = nn.Linear(128, 1, bias=False)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.kaiming_normal_(self.head_l1.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.zeros_(self.head_l1.bias)
+        nn.init.kaiming_normal_(self.head_l2.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.zeros_(self.head_l2.bias)
+        nn.init.normal_(self.head_l3.weight, mean=0.0, std=0.02)
+
+    def forward(self, x):
+        x = self.head_act1(self.head_l1(x))
+        x = self.head_act2(self.head_l2(x))
+        x = self.head_l3(x)
+        return x
+
+
+class OpenVLAForActionPredictionWithValueHead(PrismaticForConditionalGeneration):
+    config_class: PretrainedConfig = OpenVLAConfig
+
+    def __init__(self, config: OpenVLAConfig, vh_mode: str) -> None:
+        super().__init__(config)
+
+        # Value head
+        print(f"Using value head mode: {vh_mode}")
+
+        self.vh_mode = vh_mode
+        if self.vh_mode == "a0" or self.vh_mode == "a6":
+            self.value_head = ValueHead(config.text_config.hidden_size)
+        elif self.vh_mode == "a":
+            self.value_head = ValueHead(config.text_config.hidden_size * 7)
+        else:
+            raise ValueError(f"Unknown value head mode: {self.vh_mode}")
+
+        # policy init start
+        self.norm_stats = config.norm_stats
+
+        # Compute action bins
+        # self.bins = np.linspace(-1, 1, config.n_action_bins)
+        # self.bin_centers = (self.bins[:-1] + self.bins[1:]) / 2.0
+
+        # Compute vocab size for de-tokenization -- revert added "multiple of"
+        self.vocab_size = self.config.text_config.vocab_size - self.config.pad_to_multiple_of
+
+
+    def evaluate_action(
+            self,
+            input_ids: torch.LongTensor,
+            attention_mask: torch.Tensor,
+            pixel_values: torch.FloatTensor,
+            labels: torch.LongTensor,
+            unnorm_key: str
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        action_len = self.get_action_dim(unnorm_key)
+
+        # check last token is `</s>`
+        assert torch.all(input_ids[:, -1] == 2)
+        # check last 7 tokens are action tokens (32000 - 256)
+        assert torch.all(input_ids[:, -action_len - 1: -1] >= 32000 - 256)
+        # check the last -9 token is ` `
+        assert torch.all(input_ids[:, -action_len - 2] == 29871)
+        # check valid attention mask
+        assert torch.all(attention_mask[:, -action_len - 2:] == 1)
+        # check input_ids and labels
+        assert torch.allclose(input_ids, labels)
+
+        outputs = super().forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+            labels=labels,
+            output_hidden_states=True,  # output hidden_states
+            return_dict=True,  # output dict
+        )
+
+        last_hidden_state = outputs.hidden_states[-1]  # [B, L, hidden_dim]
+
+        # find first valid token index
+        #  IG  IG
+        #  -   -  a0  a6  eos ?
+        #  |   |   |   |   |  |
+        # bos img img a0  a6 eos
+
+        # index with ` `
+        if self.vh_mode == "a0":
+            hidden_features = last_hidden_state[:, -action_len - 2]  # [batch_size, hidden_dim]
+            values = self.value_head(hidden_features)  # [batch_size, 1]
+        elif self.vh_mode == "a6":
+            hidden_features = last_hidden_state[:, -1 - 2]  # [batch_size, hidden_dim]
+            values = self.value_head(hidden_features)  # [batch_size, 1]
+        elif self.vh_mode == "a":
+            hidden_features = last_hidden_state[:, -action_len - 2: - 2]  # [batch_size, 7, hidden_dim]
+            hidden_features = hidden_features.view(hidden_features.shape[0], -1)  # [batch_size, 7 * hidden_dim]
+            values = self.value_head(hidden_features)  # [batch_size, 1]
+        else:
+            raise ValueError(f"Unknown value head mode: {self.vh_mode}")
+
+        # diagnostics
+        # test = outputs.logits[:, -action_len - 2: -2][:, :, 32000 - 256 : 32000]
+        # test_ids = labels[:, -action_len - 1: -1].unsqueeze(-1).to(test.device) - (32000 - 256)
+        # test = torch.gather(test, 2, test_ids).squeeze(-1)
+        # print(test)
+
+        # logits
+        logits_tensor = outputs.logits[:, -action_len - 2: -2]  # [B, L, vocab_size + 64]
+        logits_tensor = logits_tensor[:, :, 32000 - 256 : 32000] # [B, action_len, 256]
+        logprobs_tensor = F.log_softmax(logits_tensor, dim=-1)  # [B, action_len, 256]
+
+        idxes = labels[:, -action_len - 1: -1].unsqueeze(-1) - (32000 - 256)  # [B, action_len, 1]
+        idxes = idxes.to(logprobs_tensor.device) # [B, action_len, 1]
+        logprobs = torch.gather(logprobs_tensor, 2, idxes).squeeze(-1)  # [B, action_len]
+        logprobs = logprobs.sum(dim=1, keepdim=True)  # [B, 1]
+
+        # entropy
+        probs_tensor = F.softmax(logits_tensor, dim=-1) # [B, action_len, 256]
+        entropy = -(probs_tensor * logprobs_tensor).sum(dim=-1)  # [B, action_len]
+        entropy = entropy.mean(dim=-1, keepdim=True) # [B, 1]
+
+        return logprobs, entropy, values
+
+    def get_value(self,
+            input_ids: torch.LongTensor,
+            attention_mask: torch.Tensor,
+            pixel_values: torch.FloatTensor,
+    ) -> torch.Tensor:
+
+        assert self.vh_mode == "a0"
+
+        outputs = super().forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+            output_hidden_states=True,  # output hidden_states
+            return_dict=True,  # output dict
+        )
+
+        # check the last token is ` `
+        assert torch.all(input_ids[:, -1] == 29871)
+
+        last_hidden_state = outputs.hidden_states[-1]  # [B, L, hidden_dim]
+
+        # find first valid token index
+        #  IG  IG
+        #  -   -  a0  a6  eos ?
+        #  |   |   |   |   |  |
+        # bos img img a0  a6 eos
+
+        # index with ` `
+        hidden_features = last_hidden_state[:, -1]  # [batch_size, hidden_dim]
+        values = self.value_head(hidden_features)  # [batch_size, 1]
+
+        return values
+
+    def get_hidden(self,
+            input_ids: torch.LongTensor,
+            attention_mask: torch.Tensor,
+            pixel_values: torch.FloatTensor,
+    ) -> torch.Tensor:
+        outputs = super().forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+            output_hidden_states=True,  # output hidden_states
+            return_dict=True,  # output dict
+        )
+
+        # check the last token is ` `
+        assert torch.all(input_ids[:, -1] == 29871)
+
+        hidden_n1 = outputs.hidden_states[-1][:, -1] # [B, hidden_dim]
+        hidden_n2 = outputs.hidden_states[-2][:, -1] # [B, hidden_dim]
+        hidden_n3 = outputs.hidden_states[-3][:, -1]  # [B, hidden_dim]
+
+        hiddens = torch.stack([hidden_n1, hidden_n2, hidden_n3], dim=1) # [B, 3, hidden_dim]
+
+        return hiddens
+
+    def predict_action_batch(
+            self,
+            input_ids: torch.LongTensor,
+            attention_mask: torch.Tensor,
+            pixel_values: torch.FloatTensor,
+            unnorm_key: str,
+            do_sample: bool = True,
+            **kwargs
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+        batch_size = input_ids.shape[0]
+        action_len = self.get_action_dim(unnorm_key)
+
+        # assert first token is 1
+        assert torch.all(input_ids[:, 0] == 1)
+        assert torch.all(attention_mask[:, 0] == 1)
+        # last token is space ` `
+        assert torch.all(input_ids[:, -1] == 29871)
+        assert torch.all(attention_mask[:, -1] == 1)
+
+        # Run VLA inference
+        output = self.generate(
+            input_ids,
+            attention_mask=attention_mask,
+            pixel_values=pixel_values,
+            max_new_tokens=action_len,
+            return_dict_in_generate=True,
+            output_hidden_states=True,
+            output_logits=True,
+            logits_processor=LogitsProcessorList([AllowedTokensLogitsProcessor()]),
+            do_sample=do_sample,
+            **kwargs
+        )
+        generated_ids = output.sequences[:, -action_len: ] # [B, action_len]
+
+        # check valid action
+        # if torch.any(generated_ids >= 32000) or torch.any(generated_ids < 32000 - 256):
+        #     print(f"[W]: Invalid action token: {generated_ids}")
+        assert torch.all(generated_ids >= 32000 - 256) and torch.all(generated_ids < 32000)
+
+        # diagnostics
+        # test = torch.stack(output.logits, dim=1)[:, :, 32000 - 256 : 32000]
+        # test = torch.gather(test, 2, generated_ids.unsqueeze(-1) - (32000 - 256)).squeeze(-1)
+        # print(test)
+
+        # logits
+        logits_tensor = torch.stack(output.logits, dim=1) # [B, action_len, vocab_size + 64]
+        logits_tensor = logits_tensor[:, :, 32000 - 256 : 32000] # [B, action_len, 256]
+        logprobs_tensor = F.log_softmax(logits_tensor, dim=-1) # [B, action_len, 256]
+
+        idxes = generated_ids.unsqueeze(-1) - (32000 - 256) # [B, action_len, 1]
+        logprobs = torch.gather(logprobs_tensor, 2, idxes).squeeze(-1) # [B, action_len]
+        logprobs = logprobs.sum(dim=1, keepdim=True) # [B, 1]
+
+        # value head
+        if self.vh_mode == "a0":
+            last_hidden_state = output.hidden_states[0][-1]  # [B, L, hidden_dim]
+            hidden_features = last_hidden_state[:, -1]  # [B, hidden_dim]
+            values = self.value_head(hidden_features)  # [B, 1]
+        elif self.vh_mode == "a6":
+            last_hidden_state = output.hidden_states[6][-1]  # [B, L, hidden_dim]
+            hidden_features = last_hidden_state[:, -1]  # [B, hidden_dim]
+            values = self.value_head(hidden_features)  # [B, 1]
+        elif self.vh_mode == "a":
+            last_hidden_state = torch.cat([h[-1][:, -1] for h in output.hidden_states], dim=-1)  # [B, hidden_dim * 7]
+            values = self.value_head(last_hidden_state)  # [B, 1]
+        else:
+            raise ValueError(f"Unknown value head mode: {self.vh_mode}")
+
+
+        # Extract predicted action tokens and translate into (normalized) continuous actions
+        # pact_token = generated_ids.cpu().numpy()  # [B, dim]
+        # dact = self.vocab_size - pact_token  # [B, dim]
+        # dact = np.clip(dact - 1, a_min=0, a_max=self.bin_centers.shape[0] - 1)  # [B, dim]
+        # normalized_actions = np.asarray([self.bin_centers[da] for da in dact])  # [B, dim]
+        # action_norm_stats = self.get_action_stats(unnorm_key)
+        # mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))  # [dim]
+        # mask = np.array(mask).reshape(1, -1).repeat(batch_size, axis=0)  # [B, dim]
+        # action_high = np.array(action_norm_stats["q99"]).reshape(1, -1).repeat(batch_size, axis=0)  # [B, dim]
+        # action_low = np.array(action_norm_stats["q01"]).reshape(1, -1).repeat(batch_size, axis=0)  # [B, dim]
+        # actions = np.where(
+        #     mask,
+        #     0.5 * (normalized_actions + 1) * (action_high - action_low) + action_low,
+        #     normalized_actions,
+        # )
+        # actions = torch.tensor(actions, device=input_ids.device)
+
+        return values, generated_ids, logprobs
 
     @staticmethod
     def _check_unnorm_key(norm_stats: Dict[str, Dict[str, Any]], unnorm_key: Optional[str]) -> str:

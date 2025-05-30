@@ -208,10 +208,27 @@ class PrismaticProcessor(ProcessorMixin):
         @param return_tensors: Type of return tensors (usually "pt" or TensorType.PYTORCH)
         @return: BatchFeature with keys for `input_ids`, `attention_mask` and `pixel_values`.
         """
+        assert self.tokenizer.padding_side == "left", "Required: Init tokenizer with padding_side='left'"
+
         pixel_values = self.image_processor(images, return_tensors=return_tensors)["pixel_values"]
         text_inputs = self.tokenizer(
             text, return_tensors=return_tensors, padding=padding, truncation=truncation, max_length=max_length
         )
+
+        input_ids = text_inputs["input_ids"]  # [B, L]
+        attention_mask = text_inputs["attention_mask"]  # [B, L]
+
+        first_nonzero_indices = torch.argmax(attention_mask, dim=1).unsqueeze(1)  # [B, 1]
+        # assert first token is BOS token
+        assert torch.all(input_ids.gather(1, first_nonzero_indices) == self.tokenizer.bos_token_id)
+        # assert left padding
+        assert torch.all(input_ids[:, -1] != self.tokenizer.pad_token_id)
+
+        input_ids.scatter_(1, first_nonzero_indices, self.tokenizer.pad_token_id)
+        attention_mask.scatter_(1, first_nonzero_indices, 0)
+
+        input_ids[:, 0] = self.tokenizer.bos_token_id
+        attention_mask[:, 0] = 1
 
         # [Validate] Need same number of images and text inputs!
         if pixel_values.shape[0] != text_inputs.input_ids.shape[0]:

@@ -76,8 +76,8 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(65536, spare=40),
-            'val': self._generate_examples(40, start=65536),
+            'train': self._generate_examples(4096, spare=16),
+            'val': self._generate_examples(16, start=4096),
         }
 
     def _generate_examples(self, num_ep, spare=0, start=0) -> Iterator[Tuple[str, Any]]:
@@ -130,11 +130,8 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             return sample, num_filtered
 
         tasks = [
-            {"name": "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v3/20250508_003230/data"},
-            {"name": "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v3/20250509_160448/data"},
-            {"name": "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v3/20250513_010421/data"},
-            {"name": "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v3/20250513_010446/data"},
-            {"name": "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v3/20250514_024439/data"},
+            {"name": "../../../ManiSkill/videos/datasets_mp/PandaPutOnPlateInScene25Main-v1/20250527_173517/data"},
+            {"name": "../../../ManiSkill/videos/datasets_mp/PandaPutOnPlateInScene25Main-v1/20250527_203257/data"},
         ]
 
         all_files = []
@@ -188,47 +185,14 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
 
 # tfds build --overwrite
 
-# main v2
-
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v2/20250506_201420/data"
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/m2s512
-
-# main v3
-
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v3/20250508_003230/data"
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v3/20250509_160448/data"
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v3/20250513_010421/data"
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v3/20250513_010446/data"
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Main-v3/20250514_024439/data"
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/m3s65536
-
-
 # carrot
 
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Carrot-v1/20250502_022731/data"
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/s4096c1
+# "../../../ManiSkill/videos/datasets_mp/PandaPutOnPlateInScene25Carrot-v1/20250527_172246/data"
+# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/pc140
 
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Carrot-v1/20250502_041459/data"
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/s4096c4
 
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Carrot-v1/20250502_060728/data"
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/s4096c16
+# main
 
-# instruct
-
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Instruct-v1/20250502_080141/data"
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/s4096i1
-
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Instruct-v1/20250502_093855/data"
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/s4096i4
-
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Instruct-v1/20250502_111443/data"
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/s4096i16
-
-# overlay
-
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Overlay-v1/20250502_124921/data"
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/s4096o4
-
-# "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Overlay-v1/20250502_134718/data"
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/s4096o16
+# "../../../ManiSkill/videos/datasets_mp/PandaPutOnPlateInScene25Main-v1/20250527_173517/data"
+# "../../../ManiSkill/videos/datasets_mp/PandaPutOnPlateInScene25Main-v1/20250527_203257/data"
+# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/pm4096

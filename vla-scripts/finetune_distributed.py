@@ -86,7 +86,8 @@ class FinetuneConfig:
     # Fine-tuning Parameters
     batch_size: int = 16                                            # Fine-tuning batch size
     max_steps: int = 200_000                                        # Max number of fine-tuning steps
-    save_steps: int = 5000                                          # Interval for checkpoint saving
+    eval_steps: int = 50                                          # Interval for checkpoint saving
+    save_steps: str = "0"
     learning_rate: float = 5e-4                                     # Fine-tuning learning rate
     grad_accumulation_steps: int = 1                                # Gradient accumulation steps
     image_aug: bool = True                                          # Whether to train with image augmentations
@@ -99,6 +100,7 @@ class FinetuneConfig:
     use_lora: bool = True                                           # Whether to use LoRA fine-tuning
     lora_rank: int = 32                                             # Rank of LoRA weight matrix
     lora_dropout: float = 0.0                                       # Dropout applied to LoRA weights
+    lora_load_path: str = ""
     use_quantization: bool = False                                  # Whether to 4-bit quantize VLA for LoRA fine-tuning
                                                                     #   => CAUTION: Reduces memory but hurts performance
 
@@ -108,10 +110,15 @@ class FinetuneConfig:
     run_id_note: Optional[str] = None                               # Extra note for logging, Weights & Biases
 
     # fmt: on
+    unnorm_key: Optional[str] = None
 
 
 @draccus.wrap()
 def finetune(cfg: FinetuneConfig) -> None:
+    # save steps
+    save_step_list = [int(x) for x in cfg.save_steps.split(",") if x.strip() != ""]
+
+
     print(f"Fine-tuning OpenVLA Model `{cfg.vla_path}` on `{cfg.dataset_name}`")
     assert cfg.use_lora
 
@@ -123,6 +130,8 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Configure Unique Experiment ID & Log Directory
     exp_id = f"steps_{cfg.max_steps}"
+    if not cfg.image_aug:
+        exp_id += "-no_aug"
 
     # Start =>> Build Directories
     run_dir = cfg.run_root_dir / exp_id
@@ -159,7 +168,8 @@ def finetune(cfg: FinetuneConfig) -> None:
         vla = vla.to(device_id)
 
     # [LoRA] Wrap Model w/ PEFT `LoraConfig` =>> by default we set `target_modules=all-linear`
-    if cfg.use_lora:
+    assert cfg.use_lora
+    if not cfg.lora_load_path:
         lora_config = LoraConfig(
             r=cfg.lora_rank,
             lora_alpha=min(cfg.lora_rank, 16),
@@ -168,6 +178,10 @@ def finetune(cfg: FinetuneConfig) -> None:
             init_lora_weights="gaussian",
         )
         vla = get_peft_model(vla, lora_config)
+        vla.print_trainable_parameters()
+    else:
+        vla = PeftModel.from_pretrained(vla, cfg.lora_load_path, is_trainable=True)
+        print(f"Loaded LoRA weights from {cfg.lora_load_path}")
         vla.print_trainable_parameters()
 
     # Wrap VLA in PyTorch DDP Wrapper for Multi-GPU Training
@@ -201,6 +215,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         image_transform=processor.image_processor.apply_transform,
         prompt_builder_fn=PurePromptBuilder if "v01" not in cfg.vla_path else VicunaV15ChatPromptBuilder,
     )
+    unnorm_stats = vla.module.base_model.norm_stats[cfg.unnorm_key] if cfg.unnorm_key else None
     vla_dataset = RLDSDataset(
         cfg.data_root_dir,
         cfg.dataset_name,
@@ -209,11 +224,13 @@ def finetune(cfg: FinetuneConfig) -> None:
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
         train=True,
+        unnorm_stats=unnorm_stats
     )
 
     # [Important] Save Dataset Statistics =>> used to de-normalize actions for inference!
     if distributed_state.is_main_process:
         save_dataset_statistics(vla_dataset.dataset_statistics, run_dir)
+        print(f"Using {cfg.unnorm_key} for dataset statistics")
 
     # Create Collator and DataLoader
     collator = PaddedCollatorForActionPrediction(
@@ -237,6 +254,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
         train=False,
+        unnorm_stats=unnorm_stats
     )
     dataloader_eval = DataLoader(
         vla_dataset_eval,
@@ -249,7 +267,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     # Initialize Logging =>> W&B
     if distributed_state.is_main_process:
         name = f"{cfg.dataset_name}-{exp_id}"
-        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=name)
+        wandb.init(project=cfg.wandb_project, name=name)
 
     # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
     recent_losses = deque(maxlen=cfg.grad_accumulation_steps)
@@ -328,7 +346,7 @@ def finetune(cfg: FinetuneConfig) -> None:
                 progress.update()
 
 
-            if gradient_step_idx % cfg.save_steps == 0:
+            if gradient_step_idx % cfg.eval_steps == 0 or gradient_step_idx == cfg.max_steps:
                 eval_losses, eval_action_accuracies, eval_l1_losses = [], [], []
                 for eval_idx, eval_batch in enumerate(dataloader_eval):
                     with torch.no_grad():
@@ -382,7 +400,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
 
             # Save Model Checkpoint =>> by default, only keeps the latest checkpoint, continually overwriting it!
-            if gradient_step_idx > 0 and gradient_step_idx % cfg.save_steps == 0:
+            if gradient_step_idx in save_step_list:
                 if distributed_state.is_main_process:
                     print(f"Saving Model Checkpoint for Step {gradient_step_idx}")
 
@@ -392,6 +410,9 @@ def finetune(cfg: FinetuneConfig) -> None:
                     # Save Processor & Weights
                     processor.save_pretrained(run_dir)
                     vla.module.save_pretrained(lora_save_dir)
+
+                    save_dataset_statistics(vla_dataset.dataset_statistics, lora_save_dir)
+                    print(f"Using {cfg.unnorm_key} for dataset statistics")
 
                 # Wait for processor and adapter weights to be saved by main process
                 dist.barrier()

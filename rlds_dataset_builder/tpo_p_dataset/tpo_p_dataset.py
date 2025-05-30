@@ -5,6 +5,8 @@ import glob
 import numpy as np
 import tensorflow_datasets as tfds
 
+import numpy as np
+
 
 def filter_small_actions(actions, pos_thresh=0.01, rot_thresh=0.06, check_gripper=True):
     actions = np.asarray(actions)
@@ -47,12 +49,6 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.tasks = [
-            {"name": "../../../SimplerEnv/videos/collect/octo-small_PutCarrotOnPlateInScene-v1",
-             "bug": True, "filter": False},
-            # {"name": "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25CarrotOld-v1/20250509_001356/data",
-            #  "bug": False, "filter": True},
-        ]
 
     def _info(self) -> tfds.core.DatasetInfo:
         """Dataset metadata (homepage, citation,...)."""
@@ -80,18 +76,15 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(70, spare=3),
-            'val': self._generate_examples(3, start=70),
+            'train': self._generate_examples(),
         }
 
-    def _generate_examples(self, num_ep, spare=0, start=0) -> Iterator[Tuple[str, Any]]:
+    def _generate_examples(self) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
 
-        def _parse_example(episode_path, has_bug, use_filter):
-            if has_bug:
-                data = np.load(episode_path, allow_pickle=True).tolist()
-            else:
-                data = np.load(episode_path, allow_pickle=True)["arr_0"].tolist()
+        def _parse_example(episode_path):
+            # data = np.load(episode_path, allow_pickle=True).tolist()
+            data = np.load(episode_path, allow_pickle=True).tolist()
 
             # prepare data
             ins = data['instruction']
@@ -99,21 +92,7 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             actions = data["action"]
             images = np.asarray([np.asarray(img) for img in data["image"]])
 
-            if has_bug:
-                actions = actions[1:]
-                images = images[:-1]
-
-            if use_filter:
-                mask = filter_small_actions(data["action"])
-                actions = actions[mask]
-                images = images[mask]
-                num_filtered = mask.shape[0] - mask.sum()
-                print(f"Filtered {num_filtered}/{mask.shape[0]} actions")
-            else:
-                num_filtered = 0
-
             episode = []
-            success_count = 0
             for i in range(len(actions)):
                 episode.append({
                     'observation': {
@@ -123,14 +102,6 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
                     'language_instruction': ins,
                 })
 
-                if data["info"][i]["success"]:
-                    success_count += 1
-                else:
-                    success_count = 0
-
-                if success_count >= 6:
-                    break
-
             # create output data sample
             sample = {
                 'steps': episode,
@@ -139,40 +110,43 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
                 }
             }
 
-            return sample, num_filtered
+            return sample
+
+        path = Path("../../../SimplerEnv/wandb/tpo/spc148f-tpo_2")
+        files = sorted(glob.glob(str(path / "*.npy")))
+        print(f"Found {len(files)} files in {path}")
 
         all_files = []
-        for task in self.tasks:
-            path = Path(task["name"])
-            has_bug = task["bug"]
-            filter = task["filter"]
 
-            if has_bug:
-                files = sorted(glob.glob(str(path / "*.npy")))
-            else:
-                files = sorted(glob.glob(str(path / "*.npz")))
+        for idx in range(256):
+            select_run = ""
+            select_reward = -100
+            for t in range(4):
+                fns = [f for f in files if f"data_{idx * 4 + t:0>4d}-" in f]
 
-            if spare > 0:
-                files = files[:-spare]
-            if start > 0:
-                start = min(start, len(files) - num_ep)
-            files = files[start:start + num_ep]
+                fn = fns[0]
 
-            print(f"{task}: {len(files)}")
+                g = "-g_True" in fn
+                cg = "-cg_True" in fn
+                s = "-s_True" in fn
+                reward = g * 0.1 + cg * 0.1 + (g & s) * 1.0
 
-            assert len(files) == num_ep
+                if reward > select_reward:
+                    select_reward = reward
+                    select_run = fn
 
-            all_files.extend([(f, has_bug, filter) for f in files])
+            print(f"select run: {select_run}")
 
-        num_filtered_total = 0
+            all_files.append(select_run)
+
+        print(f"{len(all_files)}")
+
+
         for idx, ep_path in enumerate(all_files):
-            sample, num_filtered = _parse_example(*ep_path)
-            num_filtered_total += num_filtered
-            yield ep_path[0], sample
+            sample = _parse_example(ep_path)
+            yield ep_path, sample
 
-        print(f"Total filtered {num_filtered_total} actions")
 
 # tfds build --overwrite
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/spc148f
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/spc148fp
-# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/spc148fo
+# mv -T ~/tensorflow_datasets/example_dataset ~/nfs/Project/RLVLA/thirdparty/datasets/spc148f_tpo_p_2
+

@@ -22,6 +22,9 @@ parser.add_argument('--dataset_name', default="test", help='name of the dataset 
 parser.add_argument('--dir', help='dir', default="../../datasets")
 args = parser.parse_args()
 
+# python visualize_dataset.py --dataset_name ptest
+
+
 if WANDB_ENTITY is not None:
     render_wandb = True
     wandb.init(entity=WANDB_ENTITY,
@@ -76,10 +79,10 @@ for i, episode in enumerate(last_five):
 fig.show()
 
 # save video
-for i, episode in tqdm(enumerate(last_five)):
+for i, episode in enumerate(last_five):
     images = np.array([e["observation"]["image"].numpy() for e in episode["steps"]])
     images_to_video(images, str(Path(args.dir) / f"{args.dataset_name}_video"), f"video_{i}",
-                    fps=10, verbose=True)
+                    fps=5, verbose=True)
 
 # visualize action and state statistics
 actions, states = [], []

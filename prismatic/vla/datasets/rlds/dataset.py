@@ -466,6 +466,7 @@ def make_interleaved_dataset(
     balance_weights: bool = False,
     traj_transform_threads: Optional[int] = None,
     traj_read_threads: Optional[int] = None,
+    unnorm_stats = None,
 ) -> dl.DLataset:
     """
     Creates an interleaved dataset from list of dataset configs (kwargs). Returns a dataset of batched frames.
@@ -509,6 +510,14 @@ def make_interleaved_dataset(
             data_kwargs.pop("dataset_frame_transform_kwargs")
         _, dataset_statistics = make_dataset_from_rlds(**data_kwargs, train=train)
         dataset_sizes.append(dataset_statistics["num_transitions"])
+
+        if unnorm_stats is not None:
+            print(f"Replace dataset statistics {dataset_kwargs['name']} with unnormalized statistics")
+            dataset_statistics["action"] = unnorm_stats["action"]
+            dataset_statistics["proprio"] = unnorm_stats["proprio"]
+            print(f"num_transitions: {dataset_statistics['num_transitions']}")
+            print(f"num_trajectories: {dataset_statistics['num_trajectories']}")
+
         all_dataset_statistics[dataset_kwargs["name"]] = dataset_statistics
 
     # Get the indices of the "primary" datasets (i.e., datasets with sample_weight == 1.0)

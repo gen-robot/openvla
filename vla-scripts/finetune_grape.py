@@ -11,7 +11,7 @@ from pathlib import Path
 from prismatic.models.backbones.llm.prompting import PromptBuilder
 from prismatic.models.backbones.vision import ImageTransform
 from prismatic.util.data_utils import tree_map
-from prismatic.vla.datasets.rlds import make_interleaved_dataset, make_single_dataset
+from prismatic.vla.datasets.rlds.dataset_dpo import make_interleaved_dataset, make_single_dataset
 from prismatic.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
 from prismatic.vla.datasets.rlds.utils.data_utils import NormalizationType
 from prismatic.models.backbones.llm.prompting import PurePromptBuilder, VicunaV15ChatPromptBuilder
@@ -635,22 +635,24 @@ def finetune(cfg: FinetuneConfig) -> None:
         image_aug=False,
     )
 
-    data_length=episode_chosen.__len__()
+    data_length = episode_chosen.__len__()
     print("Data Length:",data_length)
 
     episode_chosen_iter=iter(episode_chosen)
     episode_rejected_iter=iter(episode_rejected)
 
-    episode_chosen_list=[]
-    episode_rejected_list=[]
+    episode_chosen_list=list(iter(episode_chosen))
+    episode_rejected_list=list(iter(episode_rejected))
     # Load trajectory data from rlds files and then convert it to list
-    for i in range(data_length-7):
-
-        item_s=next(episode_chosen_iter)
-        item_f=next(episode_rejected_iter)
-
-        episode_chosen_list.append(item_s)
-        episode_rejected_list.append(item_f)
+    # for i in range(data_length-7):
+    #     item_s=next(episode_chosen_iter)
+    #     item_f=next(episode_rejected_iter)
+    #
+    #     episode_chosen_list.append(item_s)
+    #     episode_rejected_list.append(item_f)
+    assert len(episode_chosen_list)==len(episode_rejected_list)
+    print("Episode Chosen List Length:",len(episode_chosen_list))
+    print("Episode Rejected List Length:",len(episode_rejected_list))
     
     # Using a sliding window of size 8, the list is converted into a batch one by one.
     chosen_batch=window_batch(episode_chosen_list)
