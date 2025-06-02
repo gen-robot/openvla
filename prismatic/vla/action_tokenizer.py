@@ -31,16 +31,6 @@ class ActionTokenizer:
         """
         self.tokenizer, self.n_bins, self.min_action, self.max_action = tokenizer, bins, min_action, max_action
 
-        # if isinstance(min_action, np.ndarray):
-        #     self.min_action = min_action
-        # else:
-        #     self.min_action = np.array([min_action])
-
-        # if isinstance(max_action, np.ndarray):
-        #     self.max_action = max_action
-        # else:
-        #     self.max_action = np.array([max_action])
-
         # Create Uniform Bins + Compute Bin Centers
         self.bins = np.linspace(min_action, max_action, self.n_bins)
         self.bin_centers = (self.bins[:-1] + self.bins[1:]) / 2.0
@@ -51,11 +41,8 @@ class ActionTokenizer:
 
     def __call__(self, action: np.ndarray) -> Union[str, List[str]]:
         """Clip & bin actions to *the last `n_bins` tokens* of the vocabulary (e.g., tokenizer.vocab[-256:])."""
-        # import pdb; pdb.set_trace()
         action = np.clip(action, a_min=float(self.min_action), a_max=float(self.max_action))
         discretized_action = np.digitize(action, self.bins)
-        # action = np.clip(action, a_min=self.min_action, a_max=self.max_action)
-        # discretized_action = np.array([np.digitize(action[i], self.bins[:, i]) for i in range(action.shape[0])])
 
         # Handle single element vs. batch
         if len(discretized_action.shape) == 1:
@@ -79,7 +66,6 @@ class ActionTokenizer:
                     self._bin_centers. Therefore, if i==255, we subtract 1 from it so that it just becomes the index of
                     the last bin center. We implement this simply via clipping between [0, 255 - 1].
         """
-        # import pdb; pdb.set_trace()
         discretized_actions = self.tokenizer.vocab_size - action_token_ids
         discretized_actions = np.clip(discretized_actions - 1, a_min=0, a_max=self.bin_centers.shape[0] - 1)
 

@@ -41,6 +41,8 @@ from prismatic.vla.constants import (
     PROPRIO_DIM,
 )
 
+from torch.utils.data import DataLoader, Dataset, DistributedSampler, IterableDataset
+
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -108,12 +110,11 @@ class TrainConfig:
         self.train_strategy = self.vla.train_strategy
 
         # [Validate] Assert on `expected_world_size`
-        assert (
-            self.vla.expected_world_size == overwatch.world_size()
-        ), f"Expected World Size = {self.vla.expected_world_size} but Found {overwatch.world_size()} GPUs!"
+        # assert (
+        #     self.vla.expected_world_size == overwatch.world_size()
+        # ), f"Expected World Size = {self.vla.expected_world_size} but Found {overwatch.world_size()} GPUs!"
 
     # fmt: on
-
 
 @draccus.wrap()
 def train(cfg: TrainConfig) -> None:
@@ -217,66 +218,29 @@ def train(cfg: TrainConfig) -> None:
         default_image_resolution=vlm.vision_backbone.default_image_resolution,
         shuffle_buffer_size=cfg.vla.shuffle_buffer_size,
         image_aug=cfg.image_aug,
-        window_size=cfg.window_size,
-        future_action_window_size=cfg.future_action_window_size,
-        enable_cot=cfg.enable_cot,
-        cot_tags=cfg.cot_tags,
+        # window_size=cfg.window_size,
+        # future_action_window_size=cfg.future_action_window_size,
+        # enable_cot=cfg.enable_cot,
+        # cot_tags=cfg.cot_tags,
     )
 
     # Save dataset statistics for de-normalization at inference time
     if overwatch.is_rank_zero():
         save_dataset_statistics(vla_dataset.dataset_statistics, run_dir)
 
-    # Create Train Strategy
-    overwatch.info(f"Initializing Train Strategy `{cfg.train_strategy}`")
-    train_strategy = get_train_strategy(
-        train_strategy=cfg.train_strategy,
-        vlm=vlm,
-        device_id=device_id,
-        stage=stage,
-        epochs=cfg.epochs,
-        max_steps=cfg.max_steps,
-        global_batch_size=cfg.global_batch_size,
-        per_device_batch_size=cfg.per_device_batch_size,
-        learning_rate=cfg.learning_rate,
-        weight_decay=cfg.weight_decay,
-        max_grad_norm=cfg.max_grad_norm,
-        lr_scheduler_type=cfg.lr_scheduler_type,
-        warmup_ratio=cfg.warmup_ratio,
-        enable_gradient_checkpointing=cfg.vla.enable_gradient_checkpointing,
-        enable_mixed_precision_training=cfg.vla.enable_mixed_precision_training,
-        reduce_in_full_precision=cfg.vla.reduce_in_full_precision,
+    dataloader = DataLoader(
+        vla_dataset,
+        batch_size=cfg.per_device_batch_size,
+        sampler=None,
+        collate_fn=collator,
+        num_workers=0,
         worker_init_fn=worker_init_fn,
     )
-    train_strategy.run_setup(run_dir=run_dir, n_train_examples=len(vla_dataset))
 
-    # Create Metrics =>> Handles on the fly tracking, logging to specified trackers (e.g., JSONL, Weights & Biases)
-    overwatch.info(f"Creating Metrics with Active Trackers => `{cfg.trackers}`")
-    metrics = VLAMetrics(
-        cfg.trackers,
-        cfg.run_id,
-        run_dir,
-        draccus.encode(cfg),
-        wandb_project=cfg.wandb_project,
-        wandb_entity=cfg.wandb_entity,
-        resume_step=cfg.resume_step,
-        resume_epoch=cfg.resume_epoch,
-    )
-
-    # Run VLA Training
-    overwatch.info("Starting VLA Training Loop")
-    train_strategy.run_vla_training(
-        vla_dataset,
-        collator,
-        action_tokenizer,
-        metrics,
-        save_interval=cfg.save_interval,
-    )
-
-    # Finalize
-    overwatch.info("Done with Training =>> Finalizing Metrics")
-    metrics.finalize()
-
+    for batch in dataloader:
+        print("batch: ", batch.keys())
+        continue
+    
     # And... we're done!
     overwatch.info("... and that's all, folks!")
     dist.barrier()

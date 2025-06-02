@@ -171,8 +171,6 @@ def make_dataset_from_rlds(
     else:
         reasoning_dataset = None
 
-    # import pdb; pdb.set_trace()
-
     def restructure(traj, load_cot_labels=False):
         # apply a standardization function, if provided
         if standardize_fn is not None:
@@ -237,18 +235,19 @@ def make_dataset_from_rlds(
             # tf.print("episode_id: ", episode_id)
             file_names = tf.repeat(file_name, traj_len)
             episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
+
+            metadata_dict = {
+                "file_name": tf.repeat(file_name, traj_len),
+                "episode_id": tf.repeat(episode_id, traj_len),
+                "traj_len": tf.repeat(traj_len, traj_len),
+            }
+
             if load_cot_labels:
                 indices = tf.as_string(tf.range(traj_len))
                 lookup_keys = file_names + "_" + episode_ids + "_" + indices
                 # tf.print("lookup_keys: ", lookup_keys[0])
                 reasonings = reasoning_dataset.lookup(lookup_keys)
                 # tf.print("lookup_keys: ", lookup_keys[0], "reasonings: ", reasonings[0], "file_names: ", file_names[0], "episode_ids: ", episode_ids[0], "indices: ", indices[0])
-
-                metadata_dict = {
-                    "file_name": tf.repeat(file_name, traj_len),
-                    "episode_id": tf.repeat(episode_id, traj_len),
-                    "traj_len": tf.repeat(traj_len, traj_len),
-                }
 
         traj = {
             "observation": new_obs,
@@ -261,7 +260,7 @@ def make_dataset_from_rlds(
         if is_correction is not None:
             traj["is_correction"] = tf.cast(is_correction, tf.bool)
 
-        if enable_cot:
+        if load_cot_labels:
             traj["reasoning"] = reasonings
 
         if absolute_action_mask is not None:

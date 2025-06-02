@@ -129,6 +129,13 @@ class PaddedCollatorForActionPrediction:
                 pixel_values = torch.cat((torch.stack(pixel_values), torch.stack(pixel_values_wrist)), dim=1)
             else:
                 pixel_values = torch.stack(pixel_values)
+        elif isinstance(pixel_values[0], dict):
+            pixel_values = {
+                k: torch.stack([pixel_values[idx][k] for idx in range(len(input_ids))]) for k in pixel_values[0]
+            }
+            if "pixel_values_wrist" in instances[0]:
+                print("Warning: pixel_values_wrist is not supported for dict type pixel_values")
+                import pdb; pdb.set_trace()
         else:
             raise ValueError(f"Unsupported `pixel_values` type = {type(pixel_values)}")
 
