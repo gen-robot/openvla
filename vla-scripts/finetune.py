@@ -27,6 +27,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
+import random
 import wandb
 
 from experiments.robot.openvla_utils import (
@@ -118,6 +119,8 @@ class FinetuneConfig:
     resume_step: Optional[int] = None                # (When `resume==True`) Step number that we are resuming from
     image_aug: bool = True                           # If True, trains with image augmentations (HIGHLY RECOMMENDED)
     diffusion_sample_freq: int = 50                  # (When `use_diffusion==True`) Frequency for sampling in steps
+    use_correction: bool = False                     # 
+    correction_dataset_name: str = ""                #
 
     # LoRA
     use_lora: bool = True                            # If True, uses LoRA fine-tuning
@@ -443,49 +446,54 @@ def run_forward_pass(
     # Compute metrics for discrete action representation (next-token prediction)
     if not (use_l1_regression or use_diffusion):
         loss = output.loss
-        curr_action_accuracy = compute_token_accuracy(
-            predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
-        )
-        curr_action_l1_loss = compute_actions_l1_loss(
-            action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
-        )
-        if do_generated_val:
-            with torch.no_grad():
-                try:
-                    input_idx = 0
-                    while input_idx < batch["labels"].shape[1] and batch["labels"][0, input_idx] == -100:
-                        input_idx += 1
-                    pred_continuous_actions, generated_ids, predicted_action_token_ids = vla.module.predict_action_autoregressive_without_unnormalized(
-                        input_ids=batch["input_ids"][:1, :input_idx].to(device_id),
-                        attention_mask=batch["attention_mask"][:1, :input_idx].to(device_id),
-                        pixel_values=batch["pixel_values"][:1].to(torch.bfloat16).to(device_id),
-                        do_sample=False,
-                        proprio=batch["proprio"][:1] if use_proprio else None,
-                        proprio_projector=proprio_projector if use_proprio else None,
-                        noisy_action_projector=noisy_action_projector if use_diffusion else None,
-                        use_film=use_film,
-                        action_head=action_head,
-                    )
-                    predicted_action_token_ids = torch.tensor(predicted_action_token_ids).to(ground_truth_token_ids.device).to(ground_truth_token_ids.dtype)
-                    generated_action_accuracy = compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
-                    generated_l1_loss = compute_actions_l1_loss_from_action(
-                        action_tokenizer, pred_continuous_actions, ground_truth_token_ids[:1], mask=current_action_mask[:1]
-                    )
-                    generated_cot_accuracy = compute_token_accuracy_abs(generated_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
-                    metrics.update(
-                        {
-                            "generated_action_accuracy": generated_action_accuracy.item(),
-                            "generated_action_l1_loss": generated_l1_loss.item(),
-                            "generated_cot_accuracy": generated_cot_accuracy.item(),
-                        }
-                    )
-                except:
-                    print("Compute accuracy error!")
+        if current_action_mask.any():
+            curr_action_accuracy = compute_token_accuracy(
+                predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
+            )
+            curr_action_l1_loss = compute_actions_l1_loss(
+                action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
+            )
+            metrics.update(
+                {
+                    "curr_action_accuracy": curr_action_accuracy.item(),
+                    "curr_action_l1_loss": curr_action_l1_loss.item(),
+                }
+            )
+            if do_generated_val:
+                with torch.no_grad():
+                    try:
+                        input_idx = 0
+                        while input_idx < batch["labels"].shape[1] and batch["labels"][0, input_idx] == -100:
+                            input_idx += 1
+                        pred_continuous_actions, generated_ids, predicted_action_token_ids = vla.module.predict_action_autoregressive_without_unnormalized(
+                            input_ids=batch["input_ids"][:1, :input_idx].to(device_id),
+                            attention_mask=batch["attention_mask"][:1, :input_idx].to(device_id),
+                            pixel_values=batch["pixel_values"][:1].to(torch.bfloat16).to(device_id),
+                            do_sample=False,
+                            proprio=batch["proprio"][:1] if use_proprio else None,
+                            proprio_projector=proprio_projector if use_proprio else None,
+                            noisy_action_projector=noisy_action_projector if use_diffusion else None,
+                            use_film=use_film,
+                            action_head=action_head,
+                        )
+                        predicted_action_token_ids = torch.tensor(predicted_action_token_ids).to(ground_truth_token_ids.device).to(ground_truth_token_ids.dtype)
+                        generated_action_accuracy = compute_action_token_accuracy(predicted_action_token_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
+                        generated_l1_loss = compute_actions_l1_loss_from_action(
+                            action_tokenizer, pred_continuous_actions, ground_truth_token_ids[:1], mask=current_action_mask[:1]
+                        )
+                        generated_cot_accuracy = compute_token_accuracy_abs(generated_ids, ground_truth_token_ids[:1], mask=current_action_mask[:1])
+                        metrics.update(
+                            {
+                                "generated_action_accuracy": generated_action_accuracy.item(),
+                                "generated_action_l1_loss": generated_l1_loss.item(),
+                                "generated_cot_accuracy": generated_cot_accuracy.item(),
+                            }
+                        )
+                    except:
+                        print("Compute accuracy error!")
         metrics.update(
             {
                 "loss_value": loss.item(),  # Detached value for logging
-                "curr_action_accuracy": curr_action_accuracy.item(),
-                "curr_action_l1_loss": curr_action_l1_loss.item(),
             }
         )
         if next_actions_mask.any():
@@ -891,6 +899,10 @@ def run_validation(
             if time.time() - val_start_time > val_time_limit:
                 break
 
+    # If no eval, skip
+    if len(all_val_metrics) == 0:
+        return
+
     # Compute average validation metrics
     avg_val_metrics = {}
     for metric_name in all_val_metrics[0].keys():
@@ -1220,6 +1232,30 @@ def finetune(cfg: FinetuneConfig) -> None:
             cot_tags=cfg.cot_tags,
         )
 
+    if cfg.use_correction:
+        batch_transform_for_correction = RLDSBatchTransform(
+            action_tokenizer,
+            processor.tokenizer,
+            image_transform=processor.image_processor.apply_transform,
+            prompt_builder_fn=PurePromptBuilder,
+            use_wrist_image=use_wrist_image,
+            use_proprio=cfg.use_proprio,
+            history_size=0, #cfg.window_size - 1 if cfg.window_size is not None else 0
+            empty_ret_for_none_reasoning=True,
+        )
+        train_correction_dataset = RLDSDataset(
+        cfg.data_root_dir,
+        cfg.correction_dataset_name,
+        batch_transform_for_correction,
+        resize_resolution=tuple(vla.module.config.image_sizes),
+        shuffle_buffer_size=cfg.shuffle_buffer_size,
+        image_aug=cfg.image_aug,
+        window_size=cfg.window_size,
+        future_action_window_size=cfg.future_action_window_size,
+        enable_cot=cfg.enable_cot,
+        cot_tags=cfg.cot_tags,
+    )
+
     # [Important] Save dataset statistics so that we can unnormalize actions during inference
     if distributed_state.is_main_process:
         save_dataset_statistics(train_dataset.dataset_statistics, run_dir)
@@ -1245,6 +1281,17 @@ def finetune(cfg: FinetuneConfig) -> None:
             num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism
         )
 
+    correction_iter = None
+    if cfg.use_correction:
+        correction_dataloader = DataLoader(
+            train_correction_dataset,
+            batch_size=cfg.batch_size,
+            sampler=None,
+            collate_fn=collator,
+            num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism
+        )
+        correction_iter = iter(correction_dataloader)
+
     # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
     recent_metrics = {
         "loss_value": deque(maxlen=cfg.grad_accumulation_steps),
@@ -1260,6 +1307,15 @@ def finetune(cfg: FinetuneConfig) -> None:
         vla.train()
         optimizer.zero_grad()
         for batch_idx, batch in enumerate(dataloader):
+
+            if cfg.use_correction and random.random() < 0.5:
+                try:
+                    correction_batch = next(correction_iter)
+                except StopIteration:
+                    correction_iter = iter(correction_dataloader)
+                    correction_batch = next(correction_iter)
+                batch = correction_batch
+
             # Compute gradient step index
             gradient_step_idx = batch_idx // cfg.grad_accumulation_steps
             log_step = gradient_step_idx if not cfg.resume else cfg.resume_step + gradient_step_idx

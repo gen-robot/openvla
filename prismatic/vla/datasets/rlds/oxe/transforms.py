@@ -840,6 +840,22 @@ def libero_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["observation"]["gripper_state"] = trajectory["observation"]["state"][:, -2:]  # 2D gripper state
     return trajectory
 
+def franka_panda_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    # gripper action is in -1 (open)...1 (close) --> clip to 0...1, flip --> +1 = open, 0 = close
+    gripper_action = trajectory["action"][:, -1:]
+    gripper_action = invert_gripper_actions(tf.clip_by_value(gripper_action, 0, 1))
+
+    trajectory["action"] = tf.concat(
+        [
+            trajectory["action"][:, :6],
+            gripper_action,
+        ],
+        axis=1,
+    )
+    trajectory["observation"]["EEF_state"] = trajectory["observation"]["state"][:, :6]
+    trajectory["observation"]["gripper_state"] = trajectory["observation"]["state"][:, -1:]  # 2D gripper state
+    return trajectory
+
 def cobot_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     trajectory["language_instruction"] = trajectory["instruction"]
     trajectory["observation"]["qpos"] = trajectory["qpos"]
@@ -933,6 +949,9 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "libero_object_no_noops": libero_dataset_transform,
     "libero_goal_no_noops": libero_dataset_transform,
     "libero_10_no_noops": libero_dataset_transform,
+    "libero_correction_object_no_noops": libero_dataset_transform,
+    ### Franka Panda
+    "panda_rlds_dataset": franka_panda_dataset_transform,
     ### Cobot
     "cobot_rlds_dataset": cobot_dataset_transform,
     "cobot_future_dataset": cobot_dataset_transform,

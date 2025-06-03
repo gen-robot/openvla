@@ -3,6 +3,7 @@ ckpt_path=$2
 initial_state_id=$3
 num_trials_per_task=$4
 save_unit_id=$5
+start_reasoning=$6
 
 save_dir="/nvme_data/liangzhi/datasets/libero-eval-save"
 
@@ -43,7 +44,8 @@ if [[ "$ckpt_path" == *"cot"* ]]; then
     --initial_state_id ${initial_state_id} \
     --num_trials_per_task ${num_trials_per_task} \
     --save_data_dir ${save_dir} \
-    --save_unit_id ${save_unit_id}
+    --save_unit_id ${save_unit_id} \
+    --start_reasoning ${start_reasoning}
 else
   python experiments/robot/libero/run_libero_eval.py \
     --task_suite_name libero_${mode} \

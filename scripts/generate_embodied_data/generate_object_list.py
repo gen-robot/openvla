@@ -21,7 +21,7 @@ tf.config.set_visible_devices([], "GPU")
 
 warnings.filterwarnings("ignore")
 
-# System prompts
+# System promptssplits
 TASK_OBJECT_EXTRACTION_SYSTEM_INSTRUCTIONS = """
 You are an expert at analyzing robotic manipulation instructions. Your task is to extract all object names mentioned in the instruction that are relevant for the task.
 

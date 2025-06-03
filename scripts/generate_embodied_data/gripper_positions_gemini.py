@@ -240,6 +240,21 @@ def process_trajectory(episode):
     """Process a trajectory using optimized batching if possible"""
     return process_trajectory_batch(episode, batch_size=args.batch_size)
 
+def get_meta_data(episode_id, builder):
+    ds = builder.as_dataset(split=f"train[{episode_id}:{episode_id + 1}]")
+    episode = next(iter(ds))
+
+    metadata = dict()
+    for key in episode["episode_metadata"].keys():
+        if isinstance(episode["episode_metadata"][key], tf.Tensor):
+            metadata[key] = episode["episode_metadata"][key].numpy()
+            if isinstance(metadata[key], bytes):
+                metadata[key] = metadata[key].decode()
+        else:
+            metadata[key] = episode["episode_metadata"][key]
+    
+    return metadata
+
 def get_corrected_positions(episode_id, builder, plot=False, output_dir=None):
     """Get corrected gripper positions using RANSAC"""
     ds = builder.as_dataset(split=f"train[{episode_id}:{episode_id + 1}]")
@@ -283,46 +298,46 @@ def get_corrected_positions(episode_id, builder, plot=False, output_dir=None):
     points_3d_pr = np.concatenate([points_3d_valid, np.ones_like(points_3d_valid[:, :1])], axis=-1)
     points_2d_pr = np.concatenate([points_2d, np.ones_like(points_2d[:, :1])], axis=-1)
     
-    try:
-        # Fit RANSAC model
-        reg = RANSACRegressor(random_state=0).fit(points_3d_pr, points_2d_pr)
+    # try:
+    # Fit RANSAC model
+    reg = RANSACRegressor(random_state=0).fit(points_3d_pr, points_2d_pr)
+    
+    # Predict positions for all steps
+    all_points_3d_pr = np.concatenate([points_3d, np.ones_like(points_3d[:, :1])], axis=-1)
+    pr_pos = reg.predict(all_points_3d_pr)[:, :-1].astype(int)
+    
+    # Create visualization if requested
+    if plot:
+        images_np = [step["observation"][image_label].numpy() for step in episode["steps"]]
+        images_with_circles = []
         
-        # Predict positions for all steps
-        all_points_3d_pr = np.concatenate([points_3d, np.ones_like(points_3d[:, :1])], axis=-1)
-        pr_pos = reg.predict(all_points_3d_pr)[:, :-1].astype(int)
-        
-        # Create visualization if requested
-        if plot:
-            images_np = [step["observation"][image_label].numpy() for step in episode["steps"]]
-            images_with_circles = []
+        for i, img_np in enumerate(images_np):
+            # Create a copy of the image to avoid modifying the original
+            vis_img = img_np.copy()
             
-            for i, img_np in enumerate(images_np):
-                # Create a copy of the image to avoid modifying the original
-                vis_img = img_np.copy()
-                
-                # Draw the RANSAC-predicted position
-                pred_pos = pr_pos[i]
-                if 0 <= pred_pos[0] < img_np.shape[1] and 0 <= pred_pos[1] < img_np.shape[0]:
-                    vis_img = cv2.circle(vis_img, tuple(pred_pos), radius=5, color=(0, 0, 255), thickness=-1) # color: blue
-                    # add text to the image to show the legend of the color
-                    cv2.putText(vis_img, "RANSAC-predicted", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                
-                # Draw the Gemini-detected position (if available)
-                orig_pos = pos[i]
-                if orig_pos != (-1, -1) and 0 <= orig_pos[0] < img_np.shape[1] and 0 <= orig_pos[1] < img_np.shape[0]:
-                    vis_img = cv2.circle(vis_img, orig_pos, radius=3, color=(255, 0, 0), thickness=-1) # color: red
-                    cv2.putText(vis_img, "Gemini-detected", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-                images_with_circles.append(vis_img)
+            # Draw the RANSAC-predicted position
+            pred_pos = pr_pos[i]
+            if 0 <= pred_pos[0] < img_np.shape[1] and 0 <= pred_pos[1] < img_np.shape[0]:
+                vis_img = cv2.circle(vis_img, tuple(pred_pos), radius=5, color=(0, 0, 255), thickness=-1) # color: blue
+                # add text to the image to show the legend of the color
+                cv2.putText(vis_img, "RANSAC-predicted", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             
-            # Write video if we have images
-            if images_with_circles:
-                mediapy.write_video(f"{output_dir}/gripper_trajectory_{episode_id}.mp4", images_with_circles, fps=20)
+            # Draw the Gemini-detected position (if available)
+            orig_pos = pos[i]
+            if orig_pos != (-1, -1) and 0 <= orig_pos[0] < img_np.shape[1] and 0 <= orig_pos[1] < img_np.shape[0]:
+                vis_img = cv2.circle(vis_img, orig_pos, radius=3, color=(255, 0, 0), thickness=-1) # color: red
+                cv2.putText(vis_img, "Gemini-detected", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+            images_with_circles.append(vis_img)
+
+        # Write video if we have images
+        if images_with_circles:
+            mediapy.write_video(f"{output_dir}/gripper_trajectory_{episode_id}.mp4", images_with_circles, fps=20)
+    
+    return pr_pos, metadata
         
-        return pr_pos, metadata
-        
-    except Exception as e:
-        print(f"Error during RANSAC for episode {episode_id}: {e}")
-        return None, metadata
+    # except Exception as e:
+    #     print(f"Error during RANSAC for episode {episode_id}: {e}")
+    #     return None, metadata
 
 def jsonify(data):
     """Convert numpy types to JSON-serializable types"""
@@ -401,47 +416,54 @@ if __name__ == "__main__":
     start_time = time.time()
     
     for index in tqdm.tqdm(episode_indexes, desc=f"Processing episodes {args.id}/{args.splits}"):
-        try:
-            # Get corrected positions for this episode
-            pr_pos, metadata = get_corrected_positions(index, builder, plot=True, output_dir=video_dir)
+
+        meta_data_for_check = get_meta_data(index, builder)
+        file_path, episode_id_str = meta_data_for_check["file_path"], str(meta_data_for_check["episode_id"])
+        if file_path in json_data and episode_id_str in json_data[file_path]:
+            print(f"Skipping episode {index} ({file_path}, {episode_id_str}) - already processed.")
+            continue
+
+        # try:
+        # Get corrected positions for this episode
+        pr_pos, metadata = get_corrected_positions(index, builder, plot=True, output_dir=video_dir)
+        
+        # Skip if processing failed
+        if pr_pos is None or metadata is None:
+            continue
             
-            # Skip if processing failed
-            if pr_pos is None or metadata is None:
-                continue
-                
-            # Extract metadata for storage
-            file_path, episode_id_str = metadata["file_path"], str(metadata["episode_id"])
+        # Extract metadata for storage
+        file_path, episode_id_str = metadata["file_path"], str(metadata["episode_id"])
+        
+        # Skip if already processed
+        if file_path in json_data and episode_id_str in json_data[file_path]:
+            print(f"Skipping episode {index} ({file_path}, {episode_id_str}) - already processed.")
+            continue
             
-            # Skip if already processed
-            if file_path in json_data and episode_id_str in json_data[file_path]:
-                print(f"Skipping episode {index} ({file_path}, {episode_id_str}) - already processed.")
-                continue
-                
-            # Store results
-            if file_path not in json_data:
-                json_data[file_path] = {}
-                
-            json_data[file_path][episode_id_str] = {
-                "gripper_positions": pr_pos, 
-                "metadata": metadata
-            }
+        # Store results
+        if file_path not in json_data:
+            json_data[file_path] = {}
             
-            processed_count += 1
-            
-            # Save periodically
-            if processed_count > 0 and processed_count % 5 == 0:
-                with open(save_file_path, "w") as f:
-                    json.dump(jsonify(json_data), f, cls=NumpyFloatValuesEncoder)
-                    
-                # Report progress and speed
-                elapsed = time.time() - start_time
-                episodes_per_hour = processed_count / (elapsed / 3600)
-                print(f"\nProcessed {processed_count} episodes in {elapsed:.1f}s " 
-                      f"({episodes_per_hour:.1f} episodes/hour)")
+        json_data[file_path][episode_id_str] = {
+            "gripper_positions": pr_pos, 
+            "metadata": metadata
+        }
+        
+        processed_count += 1
+        
+        # Save periodically
+        if processed_count > 0 and processed_count % 5 == 0:
+            with open(save_file_path, "w") as f:
+                json.dump(jsonify(json_data), f, cls=NumpyFloatValuesEncoder)
                 
-        except Exception as e:
-            print(f"Error processing episode {index}: {e}")
-            # Continue with next episode
+            # Report progress and speed
+            elapsed = time.time() - start_time
+            episodes_per_hour = processed_count / (elapsed / 3600)
+            print(f"\nProcessed {processed_count} episodes in {elapsed:.1f}s " 
+                    f"({episodes_per_hour:.1f} episodes/hour)")
+                
+        # except Exception as e:
+        #     print(f"Error processing episode {index}: {e}")
+        #     # Continue with next episode
 
         # Final save
         with open(save_file_path, "w") as f:

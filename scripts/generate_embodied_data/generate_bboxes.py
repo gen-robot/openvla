@@ -34,7 +34,7 @@ parser.add_argument("--visualize", default=False, action="store_true", help="Gen
 parser.add_argument("--output_video_dir", type=str, help="Directory to save visualization videos (defaults to results_path/videos/)")
 
 args = parser.parse_args()
-result_path = f"./outputs/{args.dataset_name}/bboxes_gdino_base"
+result_path = f"./outputs/{args.dataset_name}/bboxes"
 os.makedirs(result_path, exist_ok=True)
 bbox_json_path = os.path.join(result_path, f"results_bboxes_{args.id}.json")
 
@@ -53,7 +53,7 @@ object_lists_dir = f"./outputs/{args.dataset_name}/object_lists_gemini"
 if object_lists_dir:
     print(f"Loading pre-generated object lists from {object_lists_dir}...")
     # Find all JSON files in the directory
-    object_lists_file = os.path.join(object_lists_dir, "full_object_lists.json")
+    object_lists_file = os.path.join(object_lists_dir, f"results_object_lists_{args.id}.json")
     try:
         with open(object_lists_file, 'r') as f:
                 data = json.load(f)
@@ -86,8 +86,8 @@ processor = AutoProcessor.from_pretrained(model_id, size={"shortest_edge": 256, 
 model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(device)
 print("Done.")
 
-BOX_THRESHOLD = 0.35
-TEXT_THRESHOLD = 0.25
+BOX_THRESHOLD = 0.2
+TEXT_THRESHOLD = 0.2
 
 def get_pre_generated_objects(file_path, episode_id):
     """
@@ -197,15 +197,14 @@ for ep_idx, episode in tqdm.tqdm(
     for bbox in pre_generated_bboxes:
         # Skip any bboxes related to robotic grippers
         label = bbox["label"].lower()
-
         if "gripper" in label:
             continue
-        
+            
         # Check if this object is among the task-relevant objects
         # Note: Need to handle potential differences in naming (e.g., "bbq sauce" vs "bbq sauce bottle")
         is_relevant = False
         for rel_obj in task_relevant_objects:
-            if rel_obj.lower() in label.lower() or label.lower() in rel_obj.lower():
+            if rel_obj.lower() in label or label in rel_obj.lower():
                 is_relevant = True
                 break
                 
@@ -214,15 +213,13 @@ for ep_idx, episode in tqdm.tqdm(
         else:
             task_irrelevant_bboxes.append(bbox)
     
-    print(f"Found {len(task_relevant_bboxes)} task-relevant and {len(task_irrelevant_bboxes)} task-irrelevant objects:")
-    print("task relevant: ", [d['label'] for d in task_relevant_bboxes])
-    print("task irrelevant: ", [d['label'] for d in task_irrelevant_bboxes])
+    print(f"Found {len(task_relevant_bboxes)} task-relevant and {len(task_irrelevant_bboxes)} task-irrelevant objects")
     
     # Create prompt with only task-relevant objects for GDINO
     task_objects_text = ". ".join([s.lower() for s in task_relevant_objects])
     if not task_objects_text.endswith("."):
         task_objects_text += "."
-    
+        
     start_time = time.time()
     bboxes_list = []
     
@@ -279,11 +276,6 @@ for ep_idx, episode in tqdm.tqdm(
         # (We're not tracking these, just copying them)
         for irrelevant_bbox in task_irrelevant_bboxes:
             current_bboxes.append(irrelevant_bbox)
-
-        # add missing relevant bboxes
-        for relevant_bbox in task_relevant_bboxes:
-            if relevant_bbox["label"] not in [bbox["label"] for bbox in current_bboxes]:
-                current_bboxes.append(relevant_bbox)
         
         # Add current bboxes to the list
         bboxes_list.append(current_bboxes)

@@ -69,6 +69,7 @@ class RLDSBatchTransform:
     history_size: int = 0
     print_prompt_limit: int = 20
     reasoning_dropout_prob: float = 0.0
+    empty_ret_for_none_reasoning: bool = False
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
@@ -76,6 +77,10 @@ class RLDSBatchTransform:
         img = Image.fromarray(rlds_batch["observation"]["image_primary"][self.history_size])
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
         actions = rlds_batch["action"][self.history_size:]
+        if "is_correction" in rlds_batch:
+            is_correction = rlds_batch["is_correction"]
+        else:
+            is_correction = True
         if "reasoning" in rlds_batch:
             reasoning, subset = reasoning_dropout(
                 rlds_batch["reasoning"].decode(),
@@ -100,17 +105,28 @@ class RLDSBatchTransform:
             lang = lang[:-1]
 
         if 'reasoning' not in rlds_batch:
+            if self.empty_ret_for_none_reasoning:
+                return {}
             conversation = [
                 {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
                 {"from": "gpt", "value": f"{action_chunk_string}"},
             ]
         elif len(reasoning) > 0:
-            conversation = [
-                {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
-                # {"from": "human", "value": f"What action should the robot take to {lang}?"},
-                {"from": "gpt", "value": f"{reasoning} {CotTag.ACTION.value} {action_chunk_string}"},
-            ]
+            if is_correction:
+                conversation = [
+                    {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
+                    # {"from": "human", "value": f"What action should the robot take to {lang}?"},
+                    {"from": "gpt", "value": f"{reasoning} {CotTag.ACTION.value} {action_chunk_string}"},
+                ]
+            else:
+                conversation = [
+                    {"from": "human", "value": f"What action should the robot take to {lang}?"}, # Explain why with {subset}."},
+                    # {"from": "human", "value": f"What action should the robot take to {lang}?"},
+                    {"from": "gpt", "value": f"{reasoning}"},
+                ]
         else:
+            if self.empty_ret_for_none_reasoning:
+                return {}
             conversation = [
                 {"from": "human", "value": f"What action should the robot take to {lang}?"},
                 {"from": "gpt", "value": f"{CotTag.ACTION.value} {action_chunk_string}"},
@@ -301,7 +317,10 @@ class RLDSDataset(IterableDataset):
 
     def __iter__(self) -> Dict[str, Any]:
         for rlds_batch in self.dataset.as_numpy_iterator():
-            yield self.batch_transform(rlds_batch)
+            ret = self.batch_transform(rlds_batch)
+            if ret == {}:
+                continue
+            yield ret
 
     def __len__(self) -> int:
         return self.dataset_length

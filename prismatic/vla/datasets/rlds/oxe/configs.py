@@ -87,6 +87,8 @@ VALID_DATASET_NAMES = [
     "libero_goal_no_noops",
     "libero_10_no_noops",
     "libero_4_task_suites_no_noops",
+    "libero_correction_object_no_noops",
+    "panda_rlds_dataset",
 ]
 
 # === Individual Dataset Configs ===
@@ -179,6 +181,24 @@ OXE_DATASET_CONFIGS = {
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", "gripper_state"], # 7-dim
         "state_encoding": StateEncoding.POS_EULER,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "libero_correction_object_no_noops": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["EEF_state", "gripper_state"],
+        "state_encoding": StateEncoding.POS_EULER,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    ####################################################################
+    # For Franka Panda                                                 #
+    #                                                                  #
+    ####################################################################
+    "panda_rlds_dataset": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["EEF_state", "gripper_state"],
+        "state_encoding": StateEncoding.POS_QUAT,
         "action_encoding": ActionEncoding.EEF_POS,
     },
     ####################################################################

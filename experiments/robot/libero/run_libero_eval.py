@@ -92,6 +92,7 @@ class GenerateConfig:
     pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
     save_data_dir: str = ""                          # For data saving
     save_unit_id: str = ""
+    start_reasoning: str = ""
     use_local_vla: bool = True                      # If True, uses local VLA model
 
     window_size: Optional[int] = None                # If provided, uses a sliding window of this size to chunk the past observations and actions
@@ -408,6 +409,10 @@ def run_episode(
             save_wrist_image_array.append(obs["robot0_eye_in_hand_image"])
             save_state_array.append(observation["state"])
 
+            gt_reasoning_text = ""
+            if cfg.start_reasoning == "move":
+                gt_reasoning_text = "MOVE REASONING:"
+
             # Query model to get action
             actions, generated_ids = get_action(
                 cfg,
@@ -421,7 +426,7 @@ def run_episode(
                 use_film=cfg.use_film,
                 enable_cot=cfg.enable_cot,
                 gemini_cot_annotator=gemini_cot_annotator,
-                gt_reasoning_text="", #"MOVE REASONING:"
+                gt_reasoning_text=gt_reasoning_text, 
             )
             # If action queue is empty, requery model
             if len(action_queue) == 0:
