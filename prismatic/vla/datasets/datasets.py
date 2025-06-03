@@ -104,6 +104,8 @@ class RLDSBatchTransform:
         if lang.endswith("."):
             lang = lang[:-1]
 
+        is_correction = True
+
         if 'reasoning' not in rlds_batch:
             if self.empty_ret_for_none_reasoning:
                 return {}
