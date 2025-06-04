@@ -7,7 +7,7 @@ import tensorflow_datasets as tfds
 import cv2
 import re
 
-class ExampleDataset(tfds.core.GeneratorBasedBuilder):
+class TPOSuccessDataset(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for example dataset."""
 
     VERSION = tfds.core.Version('1.0.0')
@@ -18,10 +18,11 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.tasks = [
-            {"path": "../../../SimplerEnv/videos/collect/octo-small_PutCarrotOnPlateInScene-v1",
+            
+            {"path": "../../../../videos/dpo/merged_002000_PutOnPlateInScene25Carrot-v1/train_carrots_num_1/20250509_125810",
              "filter": False},
-            {"path": "../../../ManiSkill/videos/datasets_mp/PutOnPlateInScene25Carrot-v1/20250421_195812/data",
-             "filter": False},
+            # {"path": "../../../../videos/datasets_mp/PutOnPlateInScene25Carrot-v1/20250421_195812/data",
+            #  "filter": False},
         ]
         self.pair_per_ep = 1
 
@@ -51,8 +52,8 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(0, 20),
-            'val': self._generate_examples(20, 2),
+            'train': self._generate_examples(num_ep=10, spare=3),
+            'val': self._generate_examples(num_ep=3, start=10),
         }
 
     def _generate_examples(self, num_ep, spare=0, start=0) -> Iterator[Tuple[str, Any]]:
@@ -64,7 +65,7 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             is_image_encode = data.get("is_image_encode", False)
             ins = data['instruction']
             ins = ins.tolist()[0] if isinstance(ins, np.ndarray) else ins
-            actions = data["action"]
+            actions = np.array(data["action"])
             import pdb;pdb.set_trace()
             images = np.asarray([np.asarray(img) for img in data["image"]])
 
@@ -112,7 +113,7 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             return sample, num_filtered
 
         all_files = []
-        rank_pattern = re.compile(r"_rank_(\d+)")
+        rank_pattern = re.compile(r"-rank_(\d+)")
         top_rank_num = 1 # get top num rank files in the dataset to generate new dataset
         for task in self.tasks:
             path = Path(task["path"])
@@ -121,18 +122,16 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             task_files = []
             episode_dirs = [f for f in path.iterdir() if f.is_dir() and f.name.startswith("episode_")]
             for episode_dir in episode_dirs:
-                files = sorted(glob.glob(str(episode_dir / f"*.npy")))
-                # TODO, to check
+                files = glob.glob(str(episode_dir / f"*.npy"))
                 ranked_files = sorted(
                     files,
-                    key=lambda f: int(rank_pattern.search(Path(f).name).group(1)) if rank_pattern.search(Path(f).name) else 0,
-                    reverse=True,
+                    key=lambda f: int(rank_pattern.search(Path(f).name).group(1)) if rank_pattern.search(Path(f).name) else 0, # for the number is uint, 0 is the smallest
+                    reverse=True, # False indicates asendinig order, True indicates descending order 
                 )
                 top_ranked_files = ranked_files[:top_rank_num]
                 for file in top_ranked_files:
                     task_files.append(file)
 
-            # TODO, to check
             if spare > 0:
                 task_files = task_files[:-spare]
             if start > 0:
@@ -141,10 +140,8 @@ class ExampleDataset(tfds.core.GeneratorBasedBuilder):
             assert len(task_files) == num_ep
             print(f"{task}: {len(task_files)}")
             all_files.extend([(f, filter) for f in task_files])
-
         for idx, ep_path in enumerate(all_files):
             sample = _parse_example(*ep_path)
-            import pdb;pdb.set_trace()
             print(ep_path[0])
             yield ep_path, sample
 
