@@ -3,4 +3,5 @@ torchrun --standalone --nnodes 1 --nproc-per-node 8 vla-scripts/train.py  \
   --vla.data_mix libero_object_no_noops \
   --data_root_dir datasets/libero_data  \
   --run_root_dir runs  \
-  --wandb_project VLA-Reasoning-debug
+  --wandb_project VLA-Reasoning-debug \
+  --enable_cot True

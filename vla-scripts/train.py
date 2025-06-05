@@ -65,7 +65,7 @@ class TrainConfig:
     run_root_dir: Path = Path("runs")                               # Path to directory to store logs & checkpoints
 
     num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
-    window_size: Optional[int] = None                # If provided, uses a sliding window of this size to chunk the past observations and actions
+    window_size: Optional[int] = 1                   # If provided, uses a sliding window of this size to chunk the past observations and actions
     num_actions_chunk: Optional[int] = 1             # If provided, uses a action chunk of this size to chunk the future actions
     cot_tags: Optional[str] = None                   # If provided, constructs a CoT label with these tags, separated by commas, otherwise uses all tags
     enable_cot: bool = False                         # If True, uses COT for reasoning
@@ -85,7 +85,8 @@ class TrainConfig:
     seed: int = 7                                                   # Random seed (for reproducibility)
 
     # HF Hub Credentials (for any gated models)
-    hf_token: Union[str, Path] = "HF_TOKEN"                  # Environment variable or Path to HF Token
+    hf_token: Union[str, Path] = "HF_TOKEN"                         # Environment variable or Path to HF Token
+    hf_cache_dir: Union[str, Path] = "~/.cache/huggingface/hub"     
 
     # Tracking Parameters
     trackers: Tuple[str, ...] = ("jsonl", "wandb")                  # Trackers to initialize (if W&B, add config!)

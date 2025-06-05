@@ -1,13 +1,13 @@
 #!/bin/bash
 
 #SBATCH --job-name=gf-vla                          # 作业名称
-#SBATCH --nodes=2                                  # 3个节点 (3×8=24 GPUs total)
+#SBATCH --nodes=1                                  # 3个节点 (3×8=24 GPUs total)
 #SBATCH --ntasks-per-node=1                        # 每个节点1个任务 (torchrun处理多GPU)
 #SBATCH --gpus-per-node=8                          # 每个节点8张GPU
 #SBATCH --cpus-per-task=32                         # 每个任务32个CPU核心
 #SBATCH --mem=256G                                 # 节点内存 (VLA需要更多内存)
-#SBATCH --output=logs/vla_finetune_multi_%j.out
-#SBATCH --error=logs/vla_finetune_multi_%j.err
+#SBATCH --output=logs/vla_train_multi_%j.out
+#SBATCH --error=logs/vla_train_multi_%j.err
 
 # 设置NCCL参数 (与测试中验证的相同)
 export NCCL_IB_HCA=mlx5_0:1,mlx5_2:1,mlx5_5:1,mlx5_8:1
@@ -18,22 +18,9 @@ export OMP_NUM_THREADS=1
 export SIF_IMAGE="/storage/openpsi/images/mlaas-eai-v2.6.sif"
 
 # --- VLA Fine-tuning 配置 (基于原始 finetune.sh) ---
-task_name="libero_object_no_noops"
-use_film=False
-use_proprio=False
-num_images_in_input=1
-use_l1_regression=False
-use_diffusion=False
-merge_lora_during_training=False
-num_actions_chunk=1
-use_parallel_decoding=False
-is_debug=False
+dataset="libero_object_no_noops"
+data_dir="datasets/libero_data"
 enable_cot=True
-use_lora=True
-cot_full=True
-resume=False
-vla_path=openvla/openvla-7b
-cot_tags="move_reason,move"
 
 # 多节点配置
 project_name="VLA-Reasoning"
@@ -108,6 +95,10 @@ srun --mpi=pmi2 \
     conda activate embodied
     conda info --env
 
+    export HF_HOME=/storage/openpsi/users/gaofeng/GF_MAC_FILES/openvla_huggingface/
+    export HF_HUB_CACHE=/storage/openpsi/users/gaofeng/GF_MAC_FILES/openvla_huggingface/hub/
+    export HF_TOKEN=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
+
     pip install zmq
     
     torchrun \
@@ -116,31 +107,15 @@ srun --mpi=pmi2 \
         --node_rank=\$NODE_RANK \
         --master_addr=$MASTER_ADDR \
         --master_port=$MASTER_PORT \
-        vla-scripts/finetune.py \
-        --vla_path ${vla_path} \
-        --data_root_dir datasets/libero_data \
-        --dataset_name ${task_name} \
-        --run_root_dir checkpoints/${task_name} \
-        --use_proprio ${use_proprio} \
-        --use_film ${use_film} \
-        --num_images_in_input ${num_images_in_input} \
-        --use_lora ${use_lora} \
-        --lora_rank 32 \
-        --batch_size 2 \
-        --grad_accumulation_steps 4 \
-        --learning_rate 5e-4 \
-        --image_aug False \
+        vla-scripts/train.py \
+        --vla.type "prism-dinosiglip-224px+mx-bridge"  \
+        --vla.expected_world_size 16 \
+        --vla.global_batch_size 512 \
+        --vla.data_mix ${dataset} \
+        --data_root_dir ${data_dir}  \
+        --run_root_dir runs  \
         --wandb_project ${project_name} \
-        --max_steps 100_000 \
-        --merge_lora_during_training ${merge_lora_during_training} \
-        --use_l1_regression ${use_l1_regression} \
-        --use_diffusion ${use_diffusion} \
-        --use_parallel_decoding ${use_parallel_decoding} \
-        --enable_cot ${enable_cot} \
-        --num_actions_chunk ${num_actions_chunk} \
-        --use_val_set True \
-        --save_freq 5000 \
-        --val_freq 1000
+        --enable_cot ${enable_cot}
 "
 
 echo "Multi-node VLA fine-tuning completed." 
