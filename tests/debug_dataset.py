@@ -22,7 +22,7 @@ from prismatic.vla.datasets.rlds.utils.data_utils import get_dataset_statistics
 from prismatic.vla.datasets.rlds.oxe import get_oxe_dataset_kwargs_and_weights, OXE_NAMED_MIXTURES
 
 
-def load_openvla_dataset(data_dir: str, task_name: str, train: bool = True):
+def load_openvla_dataset(data_dir: str, task_name: str, train: bool = True, skip_statistic_computation: bool = False):
     """Load dataset using OpenVLA's pipeline."""
     try:
         # Check if it's a named mixture or single dataset
@@ -67,6 +67,7 @@ def load_openvla_dataset(data_dir: str, task_name: str, train: bool = True):
             shuffle=False,  # Important for debugging
             num_parallel_reads=1,  # Sequential for debugging
             num_parallel_calls=1,
+            skip_statistic_computation=skip_statistic_computation,
         )
         
         return dataset, stats, dataset_kwargs
@@ -131,9 +132,10 @@ def analyze_dataset_structure(dataset, name: str, max_samples: int = 5):
 def find_problematic_record(dataset, name: str, start_from: int = 0):
     """Iterate through dataset to find the exact record that causes issues."""
     print(f"\n{'='*50}")
-    print(f"SEARCHING FOR PROBLEMATIC RECORD IN: {name}")
+    print(f"SEARCHING FOR PROBLEMATIC RECORDS IN: {name}")
     print(f"{'='*50}")
     
+    problematic_records = []
     record_count = 0
     
     try:
@@ -153,13 +155,13 @@ def find_problematic_record(dataset, name: str, start_from: int = 0):
             record_count = start_from
         
         # Create progress bar
-        pbar = tqdm(desc=f"Processing {name}", unit="trajectories")
+        pbar = tqdm(desc=f"Processing {name}", unit="trajectories", total=total_records, initial=start_from)
         
         iterator = dataset.iterator()
-        while True:
+        # Note: we use a while loop because the iterator can be advanced manually
+        while total_records is None or record_count < total_records:
             try:
                 pbar.set_description(f"Processing {name} - Trajectory {record_count}")
-                pbar.update(1)
                 
                 # Try to get next trajectory
                 trajectory = next(iterator)
@@ -190,18 +192,13 @@ def find_problematic_record(dataset, name: str, start_from: int = 0):
                             if hasattr(subvalue, 'numpy'):
                                 _ = subvalue.numpy()
                 
-                record_count += 1
-                
                 # Progress checkpoint every 1000 trajectories
-                if record_count % 1000 == 0:
-                    print(f"\n✓ Processed {record_count} trajectories so far...")
+                if (record_count + 1) % 1000 == 0:
+                    print(f"\n✓ Processed {record_count + 1} trajectories so far...")
                 
             except StopIteration:
                 # Dataset exhausted normally
-                pbar.close()
-                print(f"\n✅ Successfully processed entire dataset!")
-                print(f"Total trajectories: {record_count}")
-                return None, None, None
+                break
                 
             except (tf.errors.DataLossError, tf.errors.InvalidArgumentError, tf.errors.OutOfRangeError) as e:
                 print(f"\n❌ FOUND PROBLEMATIC TRAJECTORY!")
@@ -212,8 +209,7 @@ def find_problematic_record(dataset, name: str, start_from: int = 0):
                     print(f"Trajectory keys: {traj_keys}")
                 except:
                     print("Could not access trajectory keys")
-                pbar.close()
-                return record_count, None, e
+                problematic_records.append((record_count, None, e))
                 
             except Exception as e:
                 print(f"\n⚠️  UNEXPECTED ERROR in trajectory!")
@@ -221,15 +217,25 @@ def find_problematic_record(dataset, name: str, start_from: int = 0):
                 print(f"Error type: {type(e).__name__}")
                 print(f"Error message: {str(e)}")
                 traceback.print_exc()
-                pbar.close()
-                return record_count, None, e
+                problematic_records.append((record_count, None, e))
+
+            pbar.update(1)
+            record_count += 1
+
+        pbar.close()
+        if not problematic_records:
+            print(f"\n✅ Successfully processed entire dataset!")
+            print(f"Total trajectories: {record_count}")
+
+        return problematic_records
         
     except Exception as e:
         print(f"\n💥 CRITICAL ERROR during iteration!")
         print(f"Error type: {type(e).__name__}")
         print(f"Error message: {str(e)}")
         traceback.print_exc()
-        return record_count, None, e
+        problematic_records.append((record_count, None, e))
+        return problematic_records
 
 
 def compare_datasets(working_dataset, working_stats, problem_dataset, problem_stats):
@@ -263,6 +269,10 @@ def compare_datasets(working_dataset, working_stats, problem_dataset, problem_st
         print(f"Problem trajectories: {problem_stats.get('num_trajectories', 'unknown')}")
         print(f"Working transitions: {working_stats.get('num_transitions', 'unknown')}")
         print(f"Problem transitions: {problem_stats.get('num_transitions', 'unknown')}")
+    elif working_stats:
+        print("\nWorking dataset statistics available, but not for problematic dataset (this is expected when debugging).")
+    else:
+        print("\nDataset statistics not available for comparison.")
     
     # Sample from both datasets to compare structure
     print(f"\nComparing first trajectory structure...")
@@ -338,8 +348,17 @@ def main():
             train=True
         )
         if problematic_dataset is None:
-            print("❌ Failed to load problematic dataset")
-            return
+            print("❌ Failed to load problematic dataset, attempting to load without statistics...")
+            problematic_dataset, problem_stats, problem_kwargs = load_openvla_dataset(
+                args.problem_data_dir,
+                args.problem_task,
+                train=True,
+                skip_statistic_computation=True
+            )
+            if problematic_dataset is None:
+                print("❌ Failed to load problematic dataset even without statistics. The issue is severe.")
+                return
+
         print("✅ Problematic dataset loaded successfully")
         
         # Analyze structure if requested
@@ -351,18 +370,18 @@ def main():
         compare_datasets(working_dataset, working_stats, problematic_dataset, problem_stats)
         
         # Search for problematic record
-        prob_trajectory, prob_step, error = find_problematic_record(
+        problematic_records = find_problematic_record(
             problematic_dataset, 
             "PROBLEMATIC DATASET",
             start_from=args.start_from
         )
         
-        if prob_trajectory is not None:
+        if problematic_records:
             print(f"\n🎯 SUMMARY:")
-            print(f"Found issue at trajectory {prob_trajectory}" + 
-                  (f", step {prob_step}" if prob_step is not None else ""))
-            print(f"Error: {type(error).__name__}: {str(error)}")
-            print(f"Dataset kwargs: {problem_kwargs}")
+            print(f"Found {len(problematic_records)} problematic trajectories.")
+            for i, (idx, _, error) in enumerate(problematic_records):
+                print(f"  {i+1}. Trajectory {idx}: Error: {type(error).__name__}")
+            print(f"\nDataset kwargs: {problem_kwargs}")
         else:
             print(f"\n🤔 No issues found in the dataset.")
             print("The dataset may be working correctly, or the issue might be in the processing pipeline.")

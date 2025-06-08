@@ -21,6 +21,26 @@ from prismatic.vla.constants import NormalizationType
 overwatch = initialize_overwatch(__name__)
 
 
+def _safe_iterator(dataset_iterator, total_records):
+    """A safe iterator that skips corrupted records and counts them."""
+    skip_count = 0
+    i = 0
+    while total_records is None or i < total_records:
+        try:
+            yield next(dataset_iterator)
+            i += 1
+        except (tf.errors.DataLossError, tf.errors.InvalidArgumentError) as e:
+            overwatch.warning(f"Skipping corrupted record: {e}")
+            skip_count += 1
+            # Manually advance the iterator by one position
+            i += 1
+        except StopIteration:
+            break
+    
+    if skip_count > 0:
+        overwatch.info(f"Skipped a total of {skip_count} corrupted records.")
+
+
 def tree_map(fn: Callable, tree: Dict) -> Dict:
     return {k: tree_map(fn, v) if isinstance(v, dict) else fn(v) for k, v in tree.items()}
 
@@ -222,7 +242,8 @@ def get_dataset_statistics(
 
     overwatch.info("Computing dataset statistics. This may take a bit, but should only need to happen once.")
     actions, proprios, num_transitions, num_trajectories = [], [], 0, 0
-    for traj in tqdm(dataset.iterator(), total=cardinality if cardinality != tf.data.UNKNOWN_CARDINALITY else None):
+    iterator = _safe_iterator(dataset.iterator(), cardinality)
+    for traj in tqdm(iterator, total=cardinality if cardinality != tf.data.UNKNOWN_CARDINALITY else None):
         actions.append(traj["action"])
         proprios.append(traj["proprio"])
         num_transitions += traj["action"].shape[0]
