@@ -27,4 +27,6 @@ srun --mpi=pmi2 \
     . '/opt/conda/etc/profile.d/conda.sh'
     conda activate embodied
 
+    pip install zmq
+
     bash"

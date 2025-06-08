@@ -22,7 +22,7 @@ from prismatic.overwatch import initialize_overwatch
 from prismatic.vla.constants import (
     ACTION_PROPRIO_NORMALIZATION_TYPE,
 )
-from prismatic.util.cot_utils import make_tf_hash_table
+from prismatic.util.cot_utils import make_tf_hash_table, make_tf_hash_table_libero90
 from prismatic.vla.datasets.rlds import obs_transforms, traj_transforms
 from prismatic.vla.datasets.rlds.utils import goal_relabeling, task_augmentation
 from prismatic.vla.datasets.rlds.utils.data_utils import (
@@ -167,7 +167,10 @@ def make_dataset_from_rlds(
         with open(reasoning_dataset_path, "r") as f:
             reasoning_dataset = json.load(f)
 
-        reasoning_dataset = make_tf_hash_table(reasoning_dataset, cot_tags=cot_tags)
+        if name == "libero_lm_90":
+            reasoning_dataset = make_tf_hash_table_libero90(reasoning_dataset, cot_tags=cot_tags)
+        else:
+            reasoning_dataset = make_tf_hash_table(reasoning_dataset, cot_tags=cot_tags)
     else:
         reasoning_dataset = None
 

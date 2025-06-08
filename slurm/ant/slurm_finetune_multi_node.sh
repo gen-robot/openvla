@@ -18,7 +18,7 @@ export OMP_NUM_THREADS=1
 export SIF_IMAGE="/storage/openpsi/images/mlaas-eai-v2.6.sif"
 
 # --- VLA Fine-tuning 配置 (基于原始 finetune.sh) ---
-task_name="libero_object_no_noops"
+task_name="libero_lm_90"
 use_film=False
 use_proprio=False
 num_images_in_input=1
@@ -42,7 +42,7 @@ project_name="VLA-Reasoning"
 export MASTER_NODE_HOSTNAME=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
 export MASTER_ADDR=$MASTER_NODE_HOSTNAME
 
-export MASTER_PORT=39522
+export MASTER_PORT=39722
 export NNODES=$SLURM_NNODES
 export NPROC_PER_NODE=$SLURM_GPUS_PER_NODE
 
