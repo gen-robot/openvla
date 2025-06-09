@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Tuple, Type, Optional
 
 import numpy as np
+import tensorflow as tf
 import torch
 from PIL import Image
 from torch.utils.data import Dataset, IterableDataset
@@ -18,6 +19,7 @@ from transformers import PreTrainedTokenizerBase
 
 from prismatic.models.backbones.llm.prompting import PromptBuilder
 from prismatic.models.backbones.vision import ImageTransform
+from prismatic.overwatch import initialize_overwatch
 from prismatic.util.cot_utils import CotTag, abbreviate_tag
 from prismatic.util.data_utils import tree_map
 from prismatic.vla.action_tokenizer import ActionTokenizer
@@ -28,6 +30,9 @@ from prismatic.vla.constants import (
 )
 from prismatic.vla.datasets.rlds import make_interleaved_dataset, make_single_dataset
 from prismatic.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
+
+# Initialize Overwatch =>> Wraps `logging.Logger`
+overwatch = initialize_overwatch(__name__)
 
 
 def reasoning_dropout(reasoning: str, dropout_prob: float) -> Tuple[str, str]:
@@ -181,7 +186,7 @@ class RLDSBatchTransform:
             dataset_name=dataset_name,
             actions=actions,
             metadata=dict(
-                episode_id=rlds_batch["episode_id"],
+                episode_id=rlds_batch["episode_id"] if "episode_id" in rlds_batch else None,
                 timestep=rlds_batch["observation"]["timestep"][0],
             )
         )
@@ -316,11 +321,19 @@ class RLDSDataset(IterableDataset):
         return make_interleaved_dataset(**rlds_config, enable_cot=self.enable_cot, cot_tags=self.cot_tags)
 
     def __iter__(self) -> Dict[str, Any]:
-        for rlds_batch in self.dataset.as_numpy_iterator():
-            ret = self.batch_transform(rlds_batch)
-            if ret == {}:
+        iterator = self.dataset.as_numpy_iterator()
+        while True:
+            try:
+                rlds_batch = next(iterator)
+                ret = self.batch_transform(rlds_batch)
+                if not ret:
+                    continue
+                yield ret
+            except StopIteration:
+                return
+            except (tf.errors.DataLossError, tf.errors.InvalidArgumentError, tf.errors.FailedPreconditionError) as e:
+                overwatch.warning(f"Skipping corrupted record: {e}")
                 continue
-            yield ret
 
     def __len__(self) -> int:
         return self.dataset_length
@@ -347,12 +360,25 @@ class EpisodicRLDSDataset(RLDSDataset):
         )
 
     def __iter__(self) -> Dict[str, Any]:
-        for rlds_batch in self.dataset.as_numpy_iterator():
-            out = [
-                self.batch_transform(tree_map(lambda x: x[i], rlds_batch))  # noqa: B023
-                for i in range(rlds_batch["action"].shape[0])
-            ]
-            yield out
+        iterator = self.dataset.as_numpy_iterator()
+        while True:
+            try:
+                rlds_batch = next(iterator)
+                out = []
+                for i in range(rlds_batch["action"].shape[0]):
+                    step = self.batch_transform(tree_map(lambda x: x[i], rlds_batch))  # noqa: B023
+                    if step:
+                        out.append(step)
+
+                if not out:
+                    continue
+
+                yield out
+            except StopIteration:
+                return
+            except (tf.errors.DataLossError, tf.errors.InvalidArgumentError, tf.errors.FailedPreconditionError) as e:
+                overwatch.warning(f"Skipping corrupted episode: {e}")
+                continue
 
 
 class DummyDataset(Dataset):

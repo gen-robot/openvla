@@ -251,6 +251,25 @@ def make_dataset_from_rlds(
                 # tf.print("lookup_keys: ", lookup_keys[0])
                 reasonings = reasoning_dataset.lookup(lookup_keys)
                 # tf.print("lookup_keys: ", lookup_keys[0], "reasonings: ", reasonings[0], "file_names: ", file_names[0], "episode_ids: ", episode_ids[0], "indices: ", indices[0])
+        elif name == "libero_lm_90":
+            # import pdb; pdb.set_trace()
+            file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
+            episode_id = traj["traj_metadata"]["episode_metadata"]["demo_id"][0]
+            file_names = tf.repeat(file_name, traj_len)
+            episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
+
+            metadata_dict = {
+                "file_name": file_names,
+                "episode_id": episode_ids,
+                "traj_len": tf.repeat(traj_len, traj_len),
+            }
+
+            if load_cot_labels:
+                indices = tf.as_string(tf.range(traj_len))
+                lookup_keys = file_names + "_" + episode_ids + "_" + indices
+                # tf.print("lookup_keys: ", lookup_keys[0], " ", lookup_keys[1], " ", lookup_keys[2])
+                reasonings = reasoning_dataset.lookup(lookup_keys)
+                # tf.print("lookup_keys: ", lookup_keys[0], "reasonings: ", reasonings[0], "file_names: ", file_names[0], "episode_ids: ", episode_ids[0], "indices: ", indices[0])
 
         traj = {
             "observation": new_obs,

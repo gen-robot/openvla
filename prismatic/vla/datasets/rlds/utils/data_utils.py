@@ -29,7 +29,7 @@ def _safe_iterator(dataset_iterator, total_records):
         try:
             yield next(dataset_iterator)
             i += 1
-        except (tf.errors.DataLossError, tf.errors.InvalidArgumentError) as e:
+        except (tf.errors.DataLossError, tf.errors.InvalidArgumentError, tf.errors.FailedPreconditionError) as e:
             overwatch.warning(f"Skipping corrupted record: {e}")
             skip_count += 1
             # Manually advance the iterator by one position
