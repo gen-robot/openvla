@@ -13,7 +13,8 @@ Usage:
     python experiments/robot/libero/regenerate_libero_dataset.py \
         --libero_task_suite [ libero_spatial | libero_object | libero_goal | libero_10 ] \
         --libero_raw_data_dir <PATH TO RAW HDF5 DATASET DIR> \
-        --libero_target_dir <PATH TO TARGET DIR>
+        --libero_target_dir <PATH TO TARGET DIR> \
+        [--num-jobs <NUM_JOBS>] [--job-id <JOB_ID>]
 
     Example (LIBERO-Spatial):
         python experiments/robot/libero/regenerate_libero_dataset.py \
@@ -21,6 +22,12 @@ Usage:
             --libero_raw_data_dir ./LIBERO/libero/datasets/libero_spatial \
             --libero_target_dir ./LIBERO/libero/datasets/libero_spatial_no_noops
 
+    Example (Multiprocess):
+        python experiments/robot/libero/regenerate_libero_dataset.py \
+            --libero_task_suite libero_spatial \
+            --libero_raw_data_dir ./LIBERO/libero/datasets/libero_spatial \
+            --libero_target_dir ./LIBERO/libero/datasets/libero_spatial_no_noops \
+            --num-jobs 4 --job-id 0
 """
 
 import argparse
@@ -29,6 +36,8 @@ import os
 import time
 
 import h5py
+import imageio
+import matplotlib.pyplot as plt
 import numpy as np
 import robosuite.utils.transform_utils as T
 import tqdm
@@ -40,7 +49,7 @@ from experiments.robot.libero.libero_utils import (
 )
 
 
-IMAGE_RESOLUTION = 256
+IMAGE_RESOLUTION = 224
 
 
 def is_noop(action, prev_action=None, threshold=1e-4):
@@ -68,19 +77,64 @@ def is_noop(action, prev_action=None, threshold=1e-4):
     return np.linalg.norm(action[:-1]) < threshold and gripper_action == prev_gripper_action
 
 
+def save_visualizations(obs, save_dir, prefix=""):
+    """
+    Saves RGB, depth, and segmentation images from an observation dictionary.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+
+    cameras = ["agentview", "robot0_eye_in_hand"]
+
+    for camera in cameras:
+        # Save RGB
+        rgb_key = f"{camera}_image"
+        if rgb_key in obs and obs[rgb_key] is not None:
+            imageio.imwrite(os.path.join(save_dir, f"{prefix}_{camera}_rgb.png"), obs[rgb_key])
+
+        # Save Depth
+        depth_key = f"{camera}_depth"
+        if depth_key in obs and obs[depth_key] is not None:
+            depth_img = obs[depth_key]
+            if depth_img.ndim == 3 and depth_img.shape[-1] == 1:
+                depth_img = np.squeeze(depth_img, axis=-1)
+
+            min_val, max_val = np.min(depth_img), np.max(depth_img)
+            if max_val > min_val:
+                depth_img = (depth_img - min_val) / (max_val - min_val) * 255.0
+            depth_img = depth_img.astype(np.uint8)
+            imageio.imwrite(os.path.join(save_dir, f"{prefix}_{camera}_depth.png"), depth_img)
+
+        # Save Segmentation
+        seg_key = f"{camera}_segmentation_instance"
+        if seg_key in obs and obs[seg_key] is not None:
+            seg_img = obs[seg_key]
+            if seg_img.ndim == 3 and seg_img.shape[-1] == 1:
+                seg_img = np.squeeze(seg_img, axis=-1)
+
+            max_val = np.max(seg_img)
+            if max_val == 0:
+                colored_seg = np.zeros(seg_img.shape + (3,), dtype=np.uint8)
+            else:
+                colored_seg = (plt.cm.viridis(seg_img / max_val) * 255).astype(np.uint8)
+
+            imageio.imwrite(os.path.join(save_dir, f"{prefix}_{camera}_segmentation.png"), colored_seg[:, :, :3])
+
+
 def main(args):
     print(f"Regenerating {args.libero_task_suite} dataset!")
 
     # Create target directory
     if os.path.isdir(args.libero_target_dir):
-        user_input = input(f"Target directory already exists at path: {args.libero_target_dir}\nEnter 'y' to overwrite the directory, or anything else to exit: ")
-        if user_input != 'y':
-            exit()
+        if args.job_id == 0:
+            print(f"Warning: Target directory {args.libero_target_dir} already exists. Files may be overwritten.")
     os.makedirs(args.libero_target_dir, exist_ok=True)
 
     # Prepare JSON file to record success/false and initial states per episode
     metainfo_json_dict = {}
-    metainfo_json_out_path = f"./experiments/robot/libero/{args.libero_task_suite}_metainfo.json"
+    if args.num_jobs > 1:
+        metainfo_json_out_path = f"./{args.libero_task_suite}_metainfo.job_{args.job_id}.json"
+    else:
+        metainfo_json_out_path = f"./{args.libero_task_suite}_metainfo.json"
     with open(metainfo_json_out_path, "w") as f:
         # Just test that we can write to this file (we overwrite it later)
         json.dump(metainfo_json_dict, f)
@@ -90,15 +144,29 @@ def main(args):
     task_suite = benchmark_dict[args.libero_task_suite]()
     num_tasks_in_suite = task_suite.n_tasks
 
+    # Determine task range for this job
+    if args.num_jobs > 1:
+        tasks_per_job = int(np.ceil(num_tasks_in_suite / args.num_jobs))
+        start_task_id = args.job_id * tasks_per_job
+        end_task_id = min((args.job_id + 1) * tasks_per_job, num_tasks_in_suite)
+        task_ids_to_process = range(start_task_id, end_task_id)
+        if not task_ids_to_process:
+            print(f"Job {args.job_id} has no tasks to process. Exiting.")
+            return
+        print(f"Job {args.job_id} of {args.num_jobs}: processing tasks from {start_task_id} to {end_task_id - 1}...")
+    else:
+        task_ids_to_process = range(num_tasks_in_suite)
+
     # Setup
     num_replays = 0
     num_success = 0
     num_noops = 0
 
-    for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
+    for task_id in tqdm.tqdm(task_ids_to_process):
         # Get task in suite
         task = task_suite.get_task(task_id)
-        env, task_description = get_libero_env(task, "llava", resolution=IMAGE_RESOLUTION)
+        env, task_description = get_libero_env(
+            task, "llava", resolution=IMAGE_RESOLUTION, depth=True, segmentation="instance")
 
         # Get dataset for task
         orig_data_path = os.path.join(args.libero_raw_data_dir, f"{task.name}_demo.hdf5")
@@ -132,6 +200,10 @@ def main(args):
             robot_states = []
             agentview_images = []
             eye_in_hand_images = []
+            agentview_depths = []
+            eye_in_hand_depths = []
+            agentview_segmentations = []
+            eye_in_hand_segmentations = []
 
             # Replay original demo actions in environment and record observations
             for _, action in enumerate(orig_actions):
@@ -171,6 +243,10 @@ def main(args):
                 )
                 agentview_images.append(obs["agentview_image"])
                 eye_in_hand_images.append(obs["robot0_eye_in_hand_image"])
+                agentview_depths.append(obs["agentview_depth"])
+                eye_in_hand_depths.append(obs["robot0_eye_in_hand_depth"])
+                agentview_segmentations.append(obs["agentview_segmentation_instance"])
+                eye_in_hand_segmentations.append(obs["robot0_eye_in_hand_segmentation_instance"])
 
                 # Execute demo action in environment
                 obs, reward, done, info = env.step(action.tolist())
@@ -192,6 +268,10 @@ def main(args):
                 obs_grp.create_dataset("ee_ori", data=np.stack(ee_states, axis=0)[:, 3:])
                 obs_grp.create_dataset("agentview_rgb", data=np.stack(agentview_images, axis=0))
                 obs_grp.create_dataset("eye_in_hand_rgb", data=np.stack(eye_in_hand_images, axis=0))
+                obs_grp.create_dataset("agentview_depth", data=np.stack(agentview_depths, axis=0))
+                obs_grp.create_dataset("eye_in_hand_depth", data=np.stack(eye_in_hand_depths, axis=0))
+                obs_grp.create_dataset("agentview_segmentation", data=np.stack(agentview_segmentations, axis=0))
+                obs_grp.create_dataset("eye_in_hand_segmentation", data=np.stack(eye_in_hand_segmentations, axis=0))
                 ep_data_grp.create_dataset("actions", data=actions)
                 ep_data_grp.create_dataset("states", data=np.stack(states))
                 ep_data_grp.create_dataset("robot_states", data=np.stack(robot_states, axis=0))
@@ -237,13 +317,48 @@ def main(args):
 if __name__ == "__main__":
     # Parse command-line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--libero_task_suite", type=str, choices=["libero_spatial", "libero_object", "libero_goal", "libero_10", "libero_90"],
+    parser.add_argument("--libero_task_suite", type=str, choices=["libero_spatial", "libero_object", "libero_goal", "libero_10", "libero_90", "all"],
                         help="LIBERO task suite. Example: libero_spatial", required=True)
     parser.add_argument("--libero_raw_data_dir", type=str,
                         help="Path to directory containing raw HDF5 dataset. Example: ./LIBERO/libero/datasets/libero_spatial", required=True)
     parser.add_argument("--libero_target_dir", type=str,
                         help="Path to regenerated dataset directory. Example: ./LIBERO/libero/datasets/libero_spatial_no_noops", required=True)
+    parser.add_argument("--num-jobs", type=int, default=1, help="Number of parallel jobs to split the dataset regeneration into.")
+    parser.add_argument("--job-id", type=int, default=0, help="The 0-indexed ID of this job.")
     args = parser.parse_args()
 
     # Start data regeneration
-    main(args)
+    if args.libero_task_suite == "all":
+        task_suites = ["libero_spatial", "libero_object", "libero_goal", "libero_10", "libero_90"]
+        import copy
+        original_args = copy.deepcopy(args)
+
+        raw_dir_suite_found = None
+        for suite in task_suites:
+            if suite in original_args.libero_raw_data_dir:
+                raw_dir_suite_found = suite
+                break
+        
+        target_dir_suite_found = None
+        for suite in task_suites:
+            if suite in original_args.libero_target_dir:
+                target_dir_suite_found = suite
+                break
+        
+        for suite in task_suites:
+            print(f"\nProcessing suite: {suite}")
+            suite_args = copy.deepcopy(original_args)
+            suite_args.libero_task_suite = suite
+            
+            if raw_dir_suite_found:
+                suite_args.libero_raw_data_dir = original_args.libero_raw_data_dir.replace(raw_dir_suite_found, suite)
+            
+            if target_dir_suite_found:
+                suite_args.libero_target_dir = original_args.libero_target_dir.replace(target_dir_suite_found, suite)
+            
+            print(f"  Raw data dir: {suite_args.libero_raw_data_dir}")
+            print(f"  Target dir: {suite_args.libero_target_dir}")
+
+            main(suite_args)
+    else:
+        main(args)
