@@ -459,7 +459,7 @@ def run_forward_pass(
                     "curr_action_l1_loss": curr_action_l1_loss.item(),
                 }
             )
-            if do_generated_val:
+            if do_generated_val and not cfg.use_parallel_decoding:
                 with torch.no_grad():
                     try:
                         input_idx = 0

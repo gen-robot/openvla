@@ -242,11 +242,11 @@ def make_dataset_from_rlds(
                 reasonings = reasoning_dataset.lookup(lookup_keys)
                 # tf.print("lookup_keys: ", lookup_keys[0], "reasonings: ", reasonings[0], "file_names: ", file_names[0], "episode_ids: ", episode_ids[0], "indices: ", indices[0])
 
-                metadata_dict = {
-                    "file_name": tf.repeat(file_name, traj_len),
-                    "episode_id": tf.repeat(episode_id, traj_len),
-                    "traj_len": tf.repeat(traj_len, traj_len),
-                }
+            metadata_dict = {
+                "file_name": tf.repeat(file_name, traj_len),
+                "episode_id": tf.repeat(episode_id, traj_len),
+                "traj_len": tf.repeat(traj_len, traj_len),
+            }
 
         traj = {
             "observation": new_obs,

@@ -131,8 +131,8 @@ def main(cfg: Config):
 
         for i, step_data in enumerate(ep_data):
             # Liangzhi: speed up test
-            if i % 3 != 0:
-                continue
+            # if i % 3 != 0:
+            #     continue
             
             if file_name is None:
                 file_name = step_data.get("file_name", b"").decode()
@@ -144,11 +144,14 @@ def main(cfg: Config):
                 language_instruction = step_data["task"]["language_instruction"].decode()
             image_primary = step_data["observation"]["image_primary"][0]
             action = step_data["action"][0]
-            reasoning = step_data["reasoning"].decode()
-            if i == 0:
-                has_reasoning = len(reasoning) > 0
-            if not has_reasoning:
-                break
+            if "reasoning" in step_data:
+                reasoning = step_data["reasoning"].decode()
+            else:
+                reasoning = ""
+            # if i == 0:
+            #     has_reasoning = len(reasoning) > 0
+            # if not has_reasoning:
+            #     break
 
             if i == 0:
                 print(f">>>> Episode {episode_id} Step {i} / {len(ep_data)}")

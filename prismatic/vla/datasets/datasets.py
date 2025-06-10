@@ -243,7 +243,7 @@ class RLDSDataset(IterableDataset):
         for name, _ in mixture_spec:
             if "aloha" in name or "cobot" in name:
                 load_camera_views[name] = ("primary", "left_wrist", "right_wrist")
-            elif "libero" in name:
+            elif "libero" in name or "panda" in name:
                 load_camera_views[name] = ("primary", "wrist")
             elif "bridge" in name:
                 load_camera_views[name] = ("primary",)
