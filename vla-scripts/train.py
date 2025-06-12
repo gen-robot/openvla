@@ -162,6 +162,8 @@ def train(cfg: TrainConfig) -> None:
     #   =>> Note :: Verifies that all parameters are loaded in FP32 on load!
     overwatch.info(f"Loading Base VLM `{cfg.vla.base_vlm}` from ID/Path")
     if cfg.pretrained_checkpoint is not None:
+        if not isinstance(cfg.pretrained_checkpoint, Path):
+            cfg.pretrained_checkpoint = Path(cfg.pretrained_checkpoint)
         # [Validate] Pretrained Checkpoint `step` and `epoch` should match `resume_step` and `resume_epoch`
         #   =>> Note :: We make developers pass in `resume_*` arguments as an extra sanity check!
         if cfg.is_resume:
