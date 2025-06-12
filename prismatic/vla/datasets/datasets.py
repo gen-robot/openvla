@@ -320,20 +320,27 @@ class RLDSDataset(IterableDataset):
     def make_dataset(self, rlds_config):
         return make_interleaved_dataset(**rlds_config, enable_cot=self.enable_cot, cot_tags=self.cot_tags)
 
+    # def __iter__(self) -> Dict[str, Any]:
+    #     """Iterate over the dataset."""
+    #     iterator = self.dataset.as_numpy_iterator()
+    #     while True:
+    #         try:
+    #             rlds_batch = next(iterator)
+    #             out = []
+    #             for i in range(rlds_batch["action"].shape[0]):
+    #                 step = self.batch_transform(tree_map(lambda x: x[i], rlds_batch))  # noqa: B023
+    #                 if step:
+    #                     out.append(step)
+
+    #             if not out:
+    #                 continue
+
+    #             yield out
+    #         except StopIteration:
+    #             return
     def __iter__(self) -> Dict[str, Any]:
-        iterator = self.dataset.as_numpy_iterator()
-        while True:
-            try:
-                rlds_batch = next(iterator)
-                ret = self.batch_transform(rlds_batch)
-                if not ret:
-                    continue
-                yield ret
-            except StopIteration:
-                return
-            except (tf.errors.DataLossError, tf.errors.InvalidArgumentError, tf.errors.FailedPreconditionError) as e:
-                overwatch.warning(f"Skipping corrupted record: {e}")
-                continue
+        for rlds_batch in self.dataset.as_numpy_iterator():
+            yield self.batch_transform(rlds_batch)
 
     def __len__(self) -> int:
         return self.dataset_length
@@ -359,26 +366,31 @@ class EpisodicRLDSDataset(RLDSDataset):
             cot_tags=self.cot_tags,
         )
 
+    # def __iter__(self) -> Dict[str, Any]:
+    #     """Iterate over the dataset."""
+    #     iterator = self.dataset.as_numpy_iterator()
+    #     while True:
+    #         try:
+    #             rlds_batch = next(iterator)
+    #             out = []
+    #             for i in range(rlds_batch["action"].shape[0]):
+    #                 step = self.batch_transform(tree_map(lambda x: x[i], rlds_batch))  # noqa: B023
+    #                 if step:
+    #                     out.append(step)
+
+    #             if not out:
+    #                 continue
+
+    #             yield out
+    #         except StopIteration:
+    #             return
     def __iter__(self) -> Dict[str, Any]:
-        iterator = self.dataset.as_numpy_iterator()
-        while True:
-            try:
-                rlds_batch = next(iterator)
-                out = []
-                for i in range(rlds_batch["action"].shape[0]):
-                    step = self.batch_transform(tree_map(lambda x: x[i], rlds_batch))  # noqa: B023
-                    if step:
-                        out.append(step)
-
-                if not out:
-                    continue
-
-                yield out
-            except StopIteration:
-                return
-            except (tf.errors.DataLossError, tf.errors.InvalidArgumentError, tf.errors.FailedPreconditionError) as e:
-                overwatch.warning(f"Skipping corrupted episode: {e}")
-                continue
+        for rlds_batch in self.dataset.as_numpy_iterator():
+            out = [
+                self.batch_transform(tree_map(lambda x: x[i], rlds_batch))  # noqa: B023
+                for i in range(rlds_batch["action"].shape[0])
+            ]
+            yield out
 
 
 class DummyDataset(Dataset):

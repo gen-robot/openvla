@@ -666,7 +666,7 @@ def make_interleaved_dataset(
             cot_tags=cot_tags,
         )
         dataset = apply_trajectory_transforms(
-            dataset.repeat(),
+            dataset.apply(tf.data.experimental.ignore_errors()).repeat(),
             **traj_transform_kwargs,
             num_parallel_calls=threads,
             train=train,
