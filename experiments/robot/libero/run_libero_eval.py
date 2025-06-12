@@ -90,8 +90,8 @@ class GenerateConfig:
     #################################################################################################################
     model_family: str = "openvla"                    # Model family
     pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
-    save_data_dir: str = ""                          # For data saving
-    save_unit_id: str = ""
+    save_data_dir: str = "eval_data"                          # For data saving
+    save_unit_id: str = "libero"
     use_local_vla: bool = True                      # If True, uses local VLA model
 
     window_size: Optional[int] = None                # If provided, uses a sliding window of this size to chunk the past observations and actions
@@ -197,7 +197,7 @@ def check_unnorm_key(cfg: GenerateConfig, model) -> None:
     if unnorm_key not in model.norm_stats and f"{unnorm_key}_no_noops" in model.norm_stats:
         unnorm_key = f"{unnorm_key}_no_noops"
 
-    assert unnorm_key in model.norm_stats, f"Action un-norm key {unnorm_key} not found in VLA `norm_stats`!"
+    assert unnorm_key in model.norm_stats, f"Action un-norm key {unnorm_key} not found in VLA `norm_stats`, expected: {model.norm_stats.keys()}!"
 
     # Set the unnorm_key in cfg
     cfg.unnorm_key = unnorm_key
@@ -358,7 +358,7 @@ def run_episode(
     initial_state=None,
     log_file=None,
     gemini_cot_annotator=None,
-    cot_tags=cfg.cot_tags,
+    cot_tags=None,
     total_count=0,
 ):
     """Run a single episode in the environment."""
@@ -545,7 +545,8 @@ def run_task(
             initial_state,
             log_file,
             gemini_cot_annotator,
-            total_count, 
+            total_count=total_count, 
+            cot_tags=None,
         )
 
         # Update counters
