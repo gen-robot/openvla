@@ -123,7 +123,13 @@ def convert_openvla_weights_to_hf(cfg: HFConvertConfig) -> None:
     # Get `config.json`, 'dataset_statistics.json' and `checkpoint_pt` -- mirrors logic in `prismatic.models.load.py`
     if os.path.isdir(cfg.openvla_model_path_or_id):
         print(f"[*] Loading from Local Path `{(run_dir := Path(cfg.openvla_model_path_or_id))}`")
-        config_json, checkpoint_pt = run_dir / "config.json", run_dir / "checkpoints" / "latest-checkpoint.pt"
+        config_json = run_dir / "config.json"
+        checkpoint_pt = run_dir / "checkpoints" / "latest-checkpoint.pt"
+        if not checkpoint_pt.exists():
+            print(f"[*] No latest checkpoint found, finding latest checkpoint...")
+            checkpoint_pt = max((run_dir / "checkpoints").glob("step-*.pt"), key=lambda x: int(x.stem.split('-')[1]))
+            print(f"[*] Found latest checkpoint: {checkpoint_pt}")
+
         dataset_statistics_json = run_dir / "dataset_statistics.json"
 
         assert config_json.exists(), f"Missing `config.json` for `{run_dir = }`"

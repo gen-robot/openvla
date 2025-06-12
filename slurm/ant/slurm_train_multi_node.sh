@@ -97,7 +97,6 @@ srun --mpi=pmi2 \
 
     export HF_HOME=/storage/openpsi/users/gaofeng/GF_MAC_FILES/openvla_huggingface/
     export HF_HUB_CACHE=/storage/openpsi/users/gaofeng/GF_MAC_FILES/openvla_huggingface/hub/
-    export HF_TOKEN=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
 
     pip install zmq
     
