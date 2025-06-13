@@ -30,7 +30,6 @@ def make_oxe_dataset_kwargs(
     action_proprio_normalization_type = ACTION_PROPRIO_NORMALIZATION_TYPE,
 ) -> Dict[str, Any]:
     """Generates config (kwargs) for given dataset from Open-X Embodiment."""
-
     assert dataset_name.startswith("cobot") or dataset_name in VALID_DATASET_NAMES, \
         f"Invalid dataset name: {dataset_name}, only {VALID_DATASET_NAMES} are checked for compatibility!"
 

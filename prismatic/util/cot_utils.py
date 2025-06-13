@@ -12,6 +12,7 @@ MOVE REASONING: Movement down and clockwise ensures good positioning.
 MOVE: move down, rotate clockwise. 
 GRIPPER POSITION: [52, 62, 46, 73, 45, 81, 45, 83, 44, 82].
 """
+import copy
 import enum
 import os
 import textwrap
@@ -54,7 +55,7 @@ def get_cot_tags_list():
         CotTag.TASK.value,
         CotTag.PLAN.value,
         CotTag.VISIBLE_OBJECTS.value,
-        # CotTag.RELEVANT_OBJECTS.value,
+        CotTag.RELEVANT_OBJECTS.value,
         CotTag.SUBTASK_REASONING.value,
         CotTag.SUBTASK.value,
         CotTag.MOVE_REASONING.value,
@@ -72,9 +73,9 @@ def get_cot_database_keys():
         CotTag.RELEVANT_OBJECTS.value: "relevant_objects",
         CotTag.SUBTASK_REASONING.value: "subtask_reason",
         CotTag.SUBTASK.value: "subtask",
-        CotTag.GRIPPER_POSITION.value: "gripper",
         CotTag.MOVE_REASONING.value: "move_reason",
         CotTag.MOVE.value: "move",
+        CotTag.GRIPPER_POSITION.value: "gripper",
         CotTag.ACTION.value: "action",
     }
 
@@ -173,6 +174,84 @@ def make_tf_hash_table(raw_dict, cot_tags=None):
     return tf.lookup.StaticHashTable(
         tf.lookup.KeyValueTensorInitializer(keys, values), 
         default_value="")
+
+
+def make_tf_hash_table_libero90(raw_dict, cot_tags=None):
+    print("Building the reasoning dict...")
+    keys = []
+    values = []
+
+    def reasoning_dict_to_str(d):
+        tags = get_cot_tags_list()[:-1]  # exclude ACTION
+        database_keys = get_cot_database_keys()
+        # reasoning_parts = [(tag, d[database_keys[tag]]) for tag in tags if database_keys[tag] in d.keys()] #
+
+        if cot_tags is not None:
+            included_tags = cot_tags.split(",")
+            inverse_database_keys = get_inverse_cot_database_keys()
+            tags = [inverse_database_keys[t] for t in included_tags if t in inverse_database_keys.keys()]
+            if len(tags) < len(included_tags):
+                print(f"Warning: Some tags in {cot_tags} were not found in the CoT tags list.")
+                import pdb; pdb.set_trace()
+
+        reasoning_parts = []
+        for tag in tags:
+            reasoning_key = database_keys[tag]
+            if reasoning_key == "move":
+                reasoning_key = "movement"
+            elif reasoning_key == "move_reason":
+                reasoning_key = "movement_reasoning"
+            if reasoning_key in d.keys():
+                part = d[reasoning_key]
+                part = str(part).strip()
+                if not part.endswith("."):
+                    part += "."
+                reasoning_parts.append((tag, part))
+
+        # import pdb; pdb.set_trace()
+
+        return "@".join(f"{tag}@{part}" for tag, part in reasoning_parts)
+
+    has_reasoning = [0, 0]
+
+    def merge_list(meta_list):
+        out = []
+        for item_list in meta_list:
+            out += item_list
+
+        return out
+
+    for file_name in raw_dict.keys():
+        for episode_id in raw_dict[file_name].keys():
+            has_reasoning[1] += 1
+            
+            for i in raw_dict[file_name][episode_id].keys():
+                keys.append(file_name + "_" + str(episode_id) + "_" + i)
+                raw_reasoning_dict = raw_dict[file_name][episode_id][i]
+                reasoning_dict = copy.deepcopy(raw_dict[file_name][episode_id][i])
+                control_freq = 20 # FIXME: this is hardcoded for libero dataset
+                gripper_lookahead_n = 5  # list this many future positions of the gripper
+                jump_n = int(control_freq / gripper_lookahead_n)
+
+                reasoning_dict["plan"] = " ".join(
+                    [f"{plan_k}: {raw_reasoning_dict['plan'][plan_k]}." 
+                        for plan_k in sorted(raw_reasoning_dict["plan"].keys())]
+                )
+                reasoning_dict["bboxes"] = ", ".join(
+                    [f"{bbox_k} {merge_list(raw_reasoning_dict['bboxes'][bbox_k])}" 
+                        for bbox_k in sorted(raw_reasoning_dict["bboxes"].keys())]
+                )
+
+                values.append(reasoning_dict_to_str(reasoning_dict))
+
+    print("Example reasoning:", keys[0], values[0])
+    print("Reasoning presence statistics [# has not, # has]:", has_reasoning)
+
+    return tf.lookup.StaticHashTable(
+        tf.lookup.KeyValueTensorInitializer(keys, values), 
+        default_value="")
+
+            
 
 
 def get_cot_masks(tokens, tags, llm_tokenizer):

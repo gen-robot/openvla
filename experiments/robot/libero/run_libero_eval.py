@@ -99,6 +99,7 @@ class GenerateConfig:
     num_actions_chunk: Optional[int] = None          # If provided, uses a action chunk of this size to chunk the future actions
     enable_cot: bool = False                         # If True, uses COT to generate actions
     use_gemini_cot: bool = False                     # If True, uses Gemini to generate CoT, i.e., reasoning about the action
+    cot_tags: Optional[str] = None                   # If provided, uses these tags to generate CoT
 
     use_parallel_decoding: bool = True               # If True, uses parallel decoding inside LLaMa model's sdpa attention, i.e., replacing causal mask with bidirectional mask
     use_l1_regression: bool = True                   # If True, uses continuous action head with L1 regression objective
@@ -358,6 +359,7 @@ def run_episode(
     initial_state=None,
     log_file=None,
     gemini_cot_annotator=None,
+    cot_tags=cfg.cot_tags,
     total_count=0,
 ):
     """Run a single episode in the environment."""
@@ -426,7 +428,8 @@ def run_episode(
                 use_film=cfg.use_film,
                 enable_cot=cfg.enable_cot,
                 gemini_cot_annotator=gemini_cot_annotator,
-                gt_reasoning_text=gt_reasoning_text, 
+                cot_tags=cot_tags,
+                gt_reasoning_text="", #"MOVE REASONING:"
             )
             # If action queue is empty, requery model
             if len(action_queue) == 0:

@@ -89,7 +89,7 @@ class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(path='/nvme_data/liangzhi/franka-dataset/process_oft/pick_one/'),
+            'train': self._generate_examples(path='/nvme_data/liangzhi/franka-dataset/process/pick_one_front/'),
         }
 
     def _generate_examples(self, path) -> Iterator[Tuple[str, Any]]:

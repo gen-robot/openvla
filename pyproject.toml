@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openvla-oft"
+name = "openvla"
 authors = [
     {name = "Moo Jin Kim", email="moojink@stanford.edu"},
     {name = "Chelsea Finn", email="cbfinn@cs.stanford.edu"},

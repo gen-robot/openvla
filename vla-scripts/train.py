@@ -34,6 +34,12 @@ from prismatic.training import VLAMetrics, get_train_strategy
 from prismatic.util import set_global_seed
 from prismatic.vla import get_vla_dataset_and_collator
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
+from prismatic.vla.constants import (
+    ACTION_DIM,
+    ACTION_PROPRIO_NORMALIZATION_TYPE,
+    NUM_ACTIONS_CHUNK,
+    PROPRIO_DIM,
+)
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -58,6 +64,12 @@ class TrainConfig:
     )
     run_root_dir: Path = Path("runs")                               # Path to directory to store logs & checkpoints
 
+    num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
+    window_size: Optional[int] = 1                   # If provided, uses a sliding window of this size to chunk the past observations and actions
+    num_actions_chunk: Optional[int] = 1             # If provided, uses a action chunk of this size to chunk the future actions
+    cot_tags: Optional[str] = None                   # If provided, constructs a CoT label with these tags, separated by commas, otherwise uses all tags
+    enable_cot: bool = False                         # If True, uses COT for reasoning
+
     # Resume Run Parameters
     pretrained_checkpoint: Optional[Path] = None                    # Absolute Path to Checkpoint
     is_resume: bool = True                                          # Whether we are continuing a prior training run
@@ -73,12 +85,13 @@ class TrainConfig:
     seed: int = 7                                                   # Random seed (for reproducibility)
 
     # HF Hub Credentials (for any gated models)
-    hf_token: Union[str, Path] = Path(".hf_token")                  # Environment variable or Path to HF Token
+    hf_token: Union[str, Path] = "HF_TOKEN"                         # Environment variable or Path to HF Token
+    hf_cache_dir: Union[str, Path] = "~/.cache/huggingface/hub"     
 
     # Tracking Parameters
     trackers: Tuple[str, ...] = ("jsonl", "wandb")                  # Trackers to initialize (if W&B, add config!)
     wandb_project: str = "openvla"                                  # Name of W&B project to log to (use default!)
-    wandb_entity: str = "stanford-voltron"                          # Name of entity to log under
+    wandb_entity: str = None                          # Name of entity to log under
 
     def __post_init__(self) -> None:
         """Lift optimization parameters from `self.vla` for ease of use =>> validate on `expected_world_size`"""
@@ -106,6 +119,14 @@ class TrainConfig:
 @draccus.wrap()
 def train(cfg: TrainConfig) -> None:
     overwatch.info("OpenVLA Training :: Warming Up")
+
+    if cfg.num_actions_chunk is not None:
+        cfg.future_action_window_size = cfg.num_actions_chunk - 1
+        num_actions_chunk = cfg.num_actions_chunk
+    else:
+        cfg.future_action_window_size = None
+        num_actions_chunk = cfg.num_actions_chunk = NUM_ACTIONS_CHUNK
+
 
     # Note => Under `torchrun` initializing `overwatch` will automatically set up `torch.distributed`
     torch.cuda.set_device(device_id := overwatch.local_rank())
@@ -197,6 +218,10 @@ def train(cfg: TrainConfig) -> None:
         default_image_resolution=vlm.vision_backbone.default_image_resolution,
         shuffle_buffer_size=cfg.vla.shuffle_buffer_size,
         image_aug=cfg.image_aug,
+        window_size=cfg.window_size,
+        future_action_window_size=cfg.future_action_window_size,
+        enable_cot=cfg.enable_cot,
+        cot_tags=cfg.cot_tags,
     )
 
     # Save dataset statistics for de-normalization at inference time

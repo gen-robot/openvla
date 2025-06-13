@@ -44,6 +44,7 @@ import cv2
 import tyro
 import datetime
 
+import numpy as np
 import argparse
 import draccus
 import torch
@@ -202,16 +203,22 @@ class OpenVLAServer:
                     enable_cot=False,
                     gt_reasoning_text=""
                 )
+                # print("check:", vla_action_chunk)
                 for action in vla_action_chunk:
                     self.vla_action_list.append(action)
             
-            vla_action = self.vla_action_list.pop(0)
-            vla_action[-1] = 1 - vla_action[-1]
+            vla_actions = []
+            while len(self.vla_action_list) > 0:
+                vla_action = self.vla_action_list.pop(0)
+                vla_action[-1] = 1 - vla_action[-1]
+                vla_actions.append(vla_action)
+
+            vla_actions = np.array(vla_actions, dtype=np.float32)
 
             if double_encode:
-                return JSONResponse(json_numpy.dumps(vla_action))
+                return JSONResponse(json_numpy.dumps(vla_actions))
             else:
-                return JSONResponse(vla_action)
+                return JSONResponse(vla_actions)
         except:  # noqa: E722
             logging.error(traceback.format_exc())
             logging.warning(

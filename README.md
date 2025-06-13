@@ -87,6 +87,27 @@ for act in actions:
     print(act)
 ```
 
+### Embodied CoT
+
+To train the models, from scratch use the following command:
+```bash
+torchrun --standalone --nnodes 1 --nproc-per-node 8 vla-scripts/train.py  \
+  --vla.type "prism-dinosiglip-224px+mx-bridge"  \
+  --data_root_dir <path to training data root>  \
+  --run_root_dir <path to checkpoint saving directory>  \
+  --wandb_project <wandb project name>  \
+  --wandb_entity <wandb user name>
+```
+To evaluate the model on the WidowX robot,
+```bash
+python3 experiments/bridge/eval_model_in_bridge_env.py
+  --model.type prism-dinosiglip-224px+7b
+  --pretrained_checkpoint <path to checkpoint>
+  --host_ip <robot interface IP>
+  --port <robot interface port>
+```
+Additionally, we provide instructions for [converting, compiling, and evaluating our ECoT VLA with TensorRT-LLM](https://github.com/rail-berkeley/tensorrt-openvla), drastically improving its inference speeds while maintaining performance.
+
 ## Installation
 
 See [SETUP.md](SETUP.md) for instructions on setting up the conda environment.

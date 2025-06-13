@@ -22,7 +22,7 @@ from prismatic.overwatch import initialize_overwatch
 from prismatic.vla.constants import (
     ACTION_PROPRIO_NORMALIZATION_TYPE,
 )
-from prismatic.util.cot_utils import make_tf_hash_table
+from prismatic.util.cot_utils import make_tf_hash_table, make_tf_hash_table_libero90
 from prismatic.vla.datasets.rlds import obs_transforms, traj_transforms
 from prismatic.vla.datasets.rlds.utils import goal_relabeling, task_augmentation
 from prismatic.vla.datasets.rlds.utils.data_utils import (
@@ -167,7 +167,10 @@ def make_dataset_from_rlds(
         with open(reasoning_dataset_path, "r") as f:
             reasoning_dataset = json.load(f)
 
-        reasoning_dataset = make_tf_hash_table(reasoning_dataset, cot_tags=cot_tags)
+        if name == "libero_lm_90":
+            reasoning_dataset = make_tf_hash_table_libero90(reasoning_dataset, cot_tags=cot_tags)
+        else:
+            reasoning_dataset = make_tf_hash_table(reasoning_dataset, cot_tags=cot_tags)
     else:
         reasoning_dataset = None
 
@@ -235,18 +238,38 @@ def make_dataset_from_rlds(
             # tf.print("episode_id: ", episode_id)
             file_names = tf.repeat(file_name, traj_len)
             episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
-            if load_cot_labels:
-                indices = tf.as_string(tf.range(traj_len))
-                lookup_keys = file_names + "_" + episode_ids + "_" + indices
-                # tf.print("lookup_keys: ", lookup_keys[0])
-                reasonings = reasoning_dataset.lookup(lookup_keys)
-                # tf.print("lookup_keys: ", lookup_keys[0], "reasonings: ", reasonings[0], "file_names: ", file_names[0], "episode_ids: ", episode_ids[0], "indices: ", indices[0])
 
             metadata_dict = {
                 "file_name": tf.repeat(file_name, traj_len),
                 "episode_id": tf.repeat(episode_id, traj_len),
                 "traj_len": tf.repeat(traj_len, traj_len),
             }
+
+            if load_cot_labels:
+                indices = tf.as_string(tf.range(traj_len))
+                lookup_keys = file_names + "_" + episode_ids + "_" + indices
+                # tf.print("lookup_keys: ", lookup_keys[0])
+                reasonings = reasoning_dataset.lookup(lookup_keys)
+                # tf.print("lookup_keys: ", lookup_keys[0], "reasonings: ", reasonings[0], "file_names: ", file_names[0], "episode_ids: ", episode_ids[0], "indices: ", indices[0])
+        elif name == "libero_lm_90":
+            # import pdb; pdb.set_trace()
+            file_name = traj["traj_metadata"]["episode_metadata"]["file_path"][0]
+            episode_id = traj["traj_metadata"]["episode_metadata"]["demo_id"][0]
+            file_names = tf.repeat(file_name, traj_len)
+            episode_ids = tf.as_string(tf.repeat(episode_id, traj_len))
+
+            metadata_dict = {
+                "file_name": file_names,
+                "episode_id": episode_ids,
+                "traj_len": tf.repeat(traj_len, traj_len),
+            }
+
+            if load_cot_labels:
+                indices = tf.as_string(tf.range(traj_len))
+                lookup_keys = file_names + "_" + episode_ids + "_" + indices
+                # tf.print("lookup_keys: ", lookup_keys[0], " ", lookup_keys[1], " ", lookup_keys[2])
+                reasonings = reasoning_dataset.lookup(lookup_keys)
+                # tf.print("lookup_keys: ", lookup_keys[0], "reasonings: ", reasonings[0], "file_names: ", file_names[0], "episode_ids: ", episode_ids[0], "indices: ", indices[0])
 
         traj = {
             "observation": new_obs,
@@ -258,6 +281,9 @@ def make_dataset_from_rlds(
 
         if is_correction is not None:
             traj["is_correction"] = tf.cast(is_correction, tf.bool)
+
+        if load_cot_labels:
+            traj["reasoning"] = reasonings
 
         if absolute_action_mask is not None:
             if len(absolute_action_mask) != traj["action"].shape[-1]:
@@ -523,6 +549,7 @@ def make_single_dataset(
         **dataset_kwargs,
         train=train,
         enable_cot=enable_cot,
+        cot_tags=cot_tags,
     )
     dataset = apply_trajectory_transforms(dataset, **traj_transform_kwargs, train=train)
     dataset = apply_frame_transforms(dataset, **frame_transform_kwargs, train=train)
@@ -591,7 +618,7 @@ def make_interleaved_dataset(
         data_kwargs = copy.deepcopy(dataset_kwargs)
         if "dataset_frame_transform_kwargs" in data_kwargs:
             data_kwargs.pop("dataset_frame_transform_kwargs")
-        _, dataset_statistics = make_dataset_from_rlds(**data_kwargs, train=train)
+        _, dataset_statistics = make_dataset_from_rlds(**data_kwargs, train=train, cot_tags=cot_tags, enable_cot=enable_cot)
         dataset_sizes.append(dataset_statistics["num_transitions"])
         all_dataset_statistics[dataset_kwargs["name"]] = dataset_statistics
 

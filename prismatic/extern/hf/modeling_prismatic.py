@@ -651,6 +651,9 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                     input_embeddings, all_actions_mask, noisy_action_features
                 )
             elif getattr(self, "use_pd", False):
+                # Get mask corresponding to all action tokens
+                all_actions_mask = self._process_action_masks(labels)
+
                 # Replace the embeddings of the action tokens with zeros
                 # (Later on, the positional embeddings will be added to them)
                 all_actions_mask = all_actions_mask.unsqueeze(-1)  # (B, seq_len, 1)

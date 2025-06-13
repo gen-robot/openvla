@@ -1,0 +1,1 @@
+srun --pty --gpus=8 bash

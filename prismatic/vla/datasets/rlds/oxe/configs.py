@@ -89,6 +89,7 @@ VALID_DATASET_NAMES = [
     "libero_4_task_suites_no_noops",
     "libero_correction_object_no_noops",
     "panda_rlds_dataset",
+    "libero_lm_90"
 ]
 
 # === Individual Dataset Configs ===
@@ -148,6 +149,13 @@ OXE_DATASET_CONFIGS = {
         "action_encoding": ActionEncoding.EEF_POS,
     },
     ### LIBERO datasets (modified versions)
+    "libero_lm_90": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["state"],
+        "state_encoding": StateEncoding.POS_EULER, # FIXME: two-dim gripper state in the dataset
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
     "libero_spatial_no_noops": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},

@@ -69,7 +69,7 @@ if [ ${cot_full} = True ]; then
 else
   torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
     --vla_path ${vla_path} \
-    --data_root_dir /nvme_data/liangzhi/openvla-datasets/franka_panda_pick_one \
+    --data_root_dir /nvme_data/liangzhi/openvla-datasets/franka_panda_pick_one_front \
     --dataset_name ${task_name} \
     --run_root_dir checkpoints/${task_name} \
     --use_proprio ${use_proprio} \
@@ -89,7 +89,7 @@ else
     --use_parallel_decoding ${use_parallel_decoding} \
     --enable_cot ${enable_cot} \
     --num_actions_chunk ${num_actions_chunk} \
-    --use_val_set True \
+    --use_val_set False \
     --save_freq 1000 \
     --val_freq 500 \
     --resume ${resume} \
