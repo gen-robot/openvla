@@ -18,7 +18,7 @@ import draccus
 import numpy as np
 import tqdm
 from libero.libero import benchmark
-from scripts.generate_embodied_data.online_annotator import OnlineAnnotator
+# from scripts.generate_embodied_data.online_annotator import OnlineAnnotator
 import wandb
 import h5py
 import cv2
@@ -196,6 +196,8 @@ def check_unnorm_key(cfg: GenerateConfig, model) -> None:
     # with the suffix "_no_noops" in the dataset name)
     if unnorm_key not in model.norm_stats and f"{unnorm_key}_no_noops" in model.norm_stats:
         unnorm_key = f"{unnorm_key}_no_noops"
+    elif cfg.task_suite_name == "libero_90":
+        unnorm_key = "libero_lm_90"
 
     assert unnorm_key in model.norm_stats, f"Action un-norm key {unnorm_key} not found in VLA `norm_stats`, expected: {model.norm_stats.keys()}!"
 
@@ -605,10 +607,10 @@ def eval_libero(cfg: GenerateConfig) -> float:
     # Set random seed
     set_seed_everywhere(cfg.seed)
 
-    if cfg.enable_cot and cfg.use_gemini_cot:
-        gemini_cot_annotator = OnlineAnnotator(model_name="gemini-2.5-pro-preview-03-25")
-    else:
-        gemini_cot_annotator = None
+    # if cfg.enable_cot and cfg.use_gemini_cot:
+    #     gemini_cot_annotator = OnlineAnnotator(model_name="gemini-2.5-pro-preview-03-25")
+    # else:
+    gemini_cot_annotator = None
 
     # Initialize model and components
     model, action_head, proprio_projector, noisy_action_projector, processor = initialize_model(cfg)

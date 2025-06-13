@@ -4,6 +4,8 @@ logs
 openvla*
 datasets
 checkpoints
+eval_data
+**/**/videos
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

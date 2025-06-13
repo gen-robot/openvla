@@ -812,7 +812,7 @@ def get_vla_action(
                 else:
                     raise ValueError(f"Unsupported CoT tag: {first_tag}")
             else:
-                prompt += " TASK:"
+                prompt += " PLAN:"
 
         # Process primary image
         inputs = processor(prompt, primary_image).to(DEVICE, dtype=torch.bfloat16)

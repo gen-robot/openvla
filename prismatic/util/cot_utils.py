@@ -520,7 +520,7 @@ def get_metadata(reasoning: Dict[str, str]):
             gripper_pos = gripper_pos.split("[")[-1]
             gripper_pos = gripper_pos.split("]")[0]
             gripper_pos = [int(x) for x in gripper_pos.split(",")]
-            gripper_pos = [(gripper_pos[2 * i], gripper_pos[2 * i + 1]) for i in range(len(gripper_pos) // 2)]
+            gripper_pos = [(gripper_pos[2 * i + 1], gripper_pos[2 * i]) for i in range(len(gripper_pos) // 2)]
             metadata["gripper"] = gripper_pos
         except:
             print("Error in gripper pos!")
@@ -534,7 +534,7 @@ def get_metadata(reasoning: Dict[str, str]):
                 continue
             try:
                 coords = [int(n) for n in sample.split("[")[-1].split(",")]
-                metadata["bboxes"][obj] = coords
+                metadata["bboxes"][obj] = coords[::-1]
             except Exception as e:
                 print(f"Error parsing bbox: {e}")
 

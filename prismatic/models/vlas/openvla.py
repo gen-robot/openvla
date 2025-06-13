@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL.Image import Image as Img
 from transformers import LlamaTokenizerFast
+from transformers.models.qwen2.tokenization_qwen2_fast import Qwen2TokenizerFast
 
 from experiments.robot.bridge.reasoning_client import ReasoningClient
 from prismatic.models.vlms.prismatic import PrismaticVLM
@@ -73,14 +74,14 @@ class OpenVLA(PrismaticVLM):
     @torch.inference_mode()
     def predict_action(
         self,
-        image: Image,
+        image: Union[Img, List[Img]],
         instruction: str,
         unnorm_key: Optional[str] = None,
         info_dict: Optional[dict] = None,
         **kwargs: str,
     ) -> np.ndarray:
         """
-        Core function for VLA inference; maps input image and task instruction to continuous action and reasoning.
+        Core function for VLA inference; maps input image and task instruction to continuous action (de-tokenizes).
 
         @param image: PIL Image as [height, width, 3]
         @param instruction: Task instruction string
@@ -89,15 +90,30 @@ class OpenVLA(PrismaticVLM):
 
         @return Unnormalized (continuous) action vector --> end-effector deltas.
         """
-        image_transform, tokenizer = self.vision_backbone.image_transform, self.llm_backbone.tokenizer
+        image_transform, tokenizer = self.vision_backbone.get_image_transform(), self.llm_backbone.tokenizer
 
-        # Build VLA prompt
+        # Build VLA Prompt
         prompt_builder = self.get_prompt_builder()
         prompt_builder.add_turn(role="human", message=f"What action should the robot take to {instruction.lower()}?")
         prompt_text = prompt_builder.get_prompt()
 
         # Prepare Inputs
         init_input_ids = tokenizer(prompt_text, truncation=True, return_tensors="pt").input_ids.to(self.device)
+
+        # FIXME:
+        # if isinstance(tokenizer, LlamaTokenizerFast):
+        #     # If the special empty token ('') does not already appear after the colon (':') token in the prompt
+        #     # (after "OUT:" or "ASSISTANT:"), insert it to match the inputs seen at training time
+        #     if not torch.all(input_ids[:, -1] == 29871):
+        #         input_ids = torch.cat(
+        #             (input_ids, torch.unsqueeze(torch.Tensor([29871]).long(), dim=0).to(input_ids.device)), dim=1
+        #         )
+        # elif isinstance(tokenizer, Qwen2TokenizerFast):
+        #     # do nothing here. I think...
+        #     pass
+        # else:
+        #     raise ValueError(f"Unsupported `tokenizer` type = {type(tokenizer)}")
+
 
         def build_prompt(prompt_prefix, input_ids):
             if isinstance(tokenizer, LlamaTokenizerFast):
