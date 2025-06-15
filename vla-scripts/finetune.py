@@ -388,7 +388,7 @@ def run_forward_pass(
             noisy_actions=noisy_actions if use_diffusion else None,
             noisy_action_projector=noisy_action_projector if use_diffusion else None,
             diffusion_timestep_embeddings=diffusion_timestep_embeddings if use_diffusion else None,
-            history_dict=batch["history"] if "history" in batch else None,
+            # history_dict=batch["history"] if "history" in batch else None,
             use_film=use_film,
         )
 

@@ -19,9 +19,6 @@ import tensorflow_datasets as tfds
 from huggingface_hub import hf_hub_download
 
 from prismatic.overwatch import initialize_overwatch
-from prismatic.vla.constants import (
-    ACTION_PROPRIO_NORMALIZATION_TYPE,
-)
 from prismatic.util.cot_utils import make_tf_hash_table, make_tf_hash_table_libero90
 from prismatic.vla.datasets.rlds import obs_transforms, traj_transforms
 from prismatic.vla.datasets.rlds.utils import goal_relabeling, task_augmentation
@@ -54,14 +51,13 @@ def make_dataset_from_rlds(
     depth_obs_keys: Dict[str, Optional[str]] = {},
     state_obs_keys: List[Optional[str]] = (),
     language_key: Optional[str] = None,
-    action_proprio_normalization_type: NormalizationType = ACTION_PROPRIO_NORMALIZATION_TYPE,
+    action_proprio_normalization_type: NormalizationType = NormalizationType.NORMAL,
     dataset_statistics: Optional[Union[dict, str]] = None,
     absolute_action_mask: Optional[List[bool]] = None,
     action_normalization_mask: Optional[List[bool]] = None,
     num_parallel_reads: int = tf.data.AUTOTUNE,
     num_parallel_calls: int = tf.data.AUTOTUNE,
     enable_cot: bool = False,
-    # reasoning_dataset_path: str = f"{os.environ['HOME']}/.cache/reasonings_dataset.json",
     reasoning_dataset_dir: str = None,
     cot_tags: Optional[str] = None,
     **kwargs,
@@ -179,10 +175,6 @@ def make_dataset_from_rlds(
         if standardize_fn is not None:
             traj = standardize_fn(traj)
 
-        is_correction = None
-        if "is_correction" in traj.keys():
-            is_correction = traj["is_correction"]
-
         if not all(k in traj for k in REQUIRED_KEYS):
             raise ValueError(
                 f"Trajectory is missing keys: {REQUIRED_KEYS - set(traj.keys())}. " "Did you write a `standardize_fn`?"
@@ -278,9 +270,6 @@ def make_dataset_from_rlds(
             "dataset_name": tf.repeat(name, traj_len),
             **metadata_dict,
         }
-
-        if is_correction is not None:
-            traj["is_correction"] = tf.cast(is_correction, tf.bool)
 
         if load_cot_labels:
             traj["reasoning"] = reasonings
@@ -575,7 +564,6 @@ def make_interleaved_dataset(
     traj_transform_threads: Optional[int] = None,
     traj_read_threads: Optional[int] = None,
     enable_cot: bool = False,
-    max_action_dim: Optional[int] = None,
     cot_tags: Optional[str] = None,
 ) -> dl.DLataset:
     """

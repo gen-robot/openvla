@@ -150,17 +150,17 @@ class PaddedCollatorForActionPrediction:
         else:
             proprio = None
 
-        if "history" in instances[0]:
-            history_len = instances[0]["history"]["length"]
-            history_pixel_values = torch.stack([instance["history"]["pixel_values"] for instance in instances])
-            if "proprio" in instances[0]["history"]:
-                history_proprio = torch.Tensor(np.squeeze(np.stack([instance["history"]["proprio"] for instance in instances])))
-                history_dict = {"length": history_len, "pixel_values": history_pixel_values, "proprio": history_proprio}
-            else:
-                history_dict = {"length": history_len, "pixel_values": history_pixel_values}
-            # history_actions = torch.stack([instance["history"]["actions"] for instance in instances])
-        else:
-            history_dict = None
+        # if "history" in instances[0]:
+        #     history_len = instances[0]["history"]["length"]
+        #     history_pixel_values = torch.stack([instance["history"]["pixel_values"] for instance in instances])
+        #     if "proprio" in instances[0]["history"]:
+        #         history_proprio = torch.Tensor(np.squeeze(np.stack([instance["history"]["proprio"] for instance in instances])))
+        #         history_dict = {"length": history_len, "pixel_values": history_pixel_values, "proprio": history_proprio}
+        #     else:
+        #         history_dict = {"length": history_len, "pixel_values": history_pixel_values}
+        #     # history_actions = torch.stack([instance["history"]["actions"] for instance in instances])
+        # else:
+        #     history_dict = None
 
         # Liangzhi: Process metadata for debug
         episode_ids = [instance["metadata"]["episode_id"].decode("utf-8") for instance in instances]
@@ -178,6 +178,6 @@ class PaddedCollatorForActionPrediction:
         )
         if dataset_names is not None:
             output["dataset_names"] = dataset_names
-        if history_dict is not None:
-            output["history"] = history_dict
+        # if history_dict is not None:
+        #     output["history"] = history_dict
         return output
