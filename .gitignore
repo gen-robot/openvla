@@ -2,7 +2,7 @@ runs
 **/**/outputs*
 logs
 openvla*
-./datasets
+/datasets
 checkpoints
 eval_data
 **/**/videos
