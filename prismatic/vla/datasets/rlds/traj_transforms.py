@@ -11,7 +11,7 @@ from typing import Dict
 import tensorflow as tf
 
 
-def pad_action(traj: Dict, window_size: int, future_action_window_size: int = 0, goal_timestep = -1) -> Dict:
+def pad_action(traj: Dict, window_size: int, future_action_window_size: int = 0) -> Dict:
     """
     Pads actions with the first/last action or zero action according to absolute_action_mask.
     """
@@ -19,7 +19,7 @@ def pad_action(traj: Dict, window_size: int, future_action_window_size: int = 0,
         action_dim = traj["action"].shape[-1]
         if pad_mode == "right":
             absolute_action_mask = tf.broadcast_to(traj["absolute_action_mask"][-1:], [pad_length, action_dim])
-            valid_action = tf.broadcast_to(traj["action"][goal_timestep], [pad_length, action_dim])
+            valid_action = tf.broadcast_to(traj["action"][-1], [pad_length, action_dim])
         else:
             absolute_action_mask = tf.broadcast_to(traj["absolute_action_mask"][0:1], [pad_length, action_dim])
             valid_action = tf.broadcast_to(traj["action"][0], [pad_length, action_dim])
@@ -53,13 +53,8 @@ def chunk_act_obs(traj: Dict, window_size: int, future_action_window_size: int =
         tf.range(traj_len)[:, None], [traj_len, window_size]
     )
 
-    if "timestep" in traj["task"]:
-        goal_timestep = traj["task"]["timestep"]
-    else:
-        goal_timestep = tf.fill([traj_len], traj_len - 1)
-
     # action shape: [traj_len + window_size - 1 + future_action_window_size, action_dim]
-    traj = pad_action(traj, window_size, future_action_window_size, goal_timestep)
+    traj = pad_action(traj, window_size, future_action_window_size)
     action_chunk_indices = tf.broadcast_to(
         tf.range(-window_size + 1, 1 + future_action_window_size),
         [traj_len, window_size + future_action_window_size],

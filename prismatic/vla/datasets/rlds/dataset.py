@@ -147,19 +147,6 @@ def make_dataset_from_rlds(
         reasoning_dataset_path = os.path.join(reasoning_dataset_dir, f"{name}.json")
         assert os.path.isfile(reasoning_dataset_path), f"Reasoning dataset for {name} is not found in {reasoning_dataset_dir}"
 
-        # if os.path.isfile(reasoning_dataset_path):
-        #     print(f"Loading from local checkpoint path `{reasoning_dataset_path}`.")
-        # else:
-        #     print(f"Dataset file `{reasoning_dataset_path}` not found, loading from HF.")
-
-        #     download_path = hf_hub_download(
-        #         repo_id="Embodied-CoT/embodied_features_bridge",
-        #         filename="embodied_features_bridge.json",
-        #         repo_type="dataset",
-        #     )
-
-        #     shutil.copyfile(download_path, reasoning_dataset_path)
-
         with open(reasoning_dataset_path, "r") as f:
             reasoning_dataset = json.load(f)
 
@@ -654,7 +641,7 @@ def make_interleaved_dataset(
             cot_tags=cot_tags,
         )
         dataset = apply_trajectory_transforms(
-            dataset.apply(tf.data.experimental.ignore_errors()).repeat(),
+            dataset.apply(tf.data.experimental.ignore_errors()).repeat(), # to handle some broken data
             **traj_transform_kwargs,
             num_parallel_calls=threads,
             train=train,

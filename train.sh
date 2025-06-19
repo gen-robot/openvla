@@ -1,5 +1,8 @@
+export CUDA_VISIBLE_DEVICES=7
+export NCCL_SOCKET_IFNAME=bond4
+
 NUM_GPUS=1
-BATCH_SIZE_PER_GPU=32
+BATCH_SIZE_PER_GPU=1
 TOTAL_BATCH_SIZE=$((NUM_GPUS * BATCH_SIZE_PER_GPU))
 
 # torchrun --standalone --nnodes 1 --nproc-per-node $NUM_GPUS vla-scripts/train.py  \
@@ -20,12 +23,16 @@ TOTAL_BATCH_SIZE=$((NUM_GPUS * BATCH_SIZE_PER_GPU))
 
 torchrun --standalone --nnodes 1 --nproc-per-node $NUM_GPUS vla-scripts/train.py \
   --vla.type "prism-qwen25-dinosiglip-224px+0_5b+mx-libero-90" \
-  --vla.data_mix libero_90 \
+  --vla.data_mix libero_lm_90 \
+  --vla.image_sequence_len 2 \
+  --vla.use_wrist_image False \
+  --vla.expected_world_size $NUM_GPUS \
+  --vla.global_batch_size $TOTAL_BATCH_SIZE \
+  --vla.per_device_batch_size $BATCH_SIZE_PER_GPU \
+  --action_chunk_size 3 \
   --data_root_dir datasets/libero_data  \
   --run_root_dir runs \
   --wandb_project VLA-Reasoning \
   --run_id_note libero_lm_90-miniVLA \
-  --vla.expected_world_size $NUM_GPUS \
-  --vla.global_batch_size $TOTAL_BATCH_SIZE \
-  --vla.per_device_batch_size $BATCH_SIZE_PER_GPU 
-  # --enable_cot True \
+  --enable_cot True
+  # --cot_tags "move_reason,move"

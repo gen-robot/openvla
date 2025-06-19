@@ -25,9 +25,8 @@ from prismatic.util.cot_utils import CotTag, abbreviate_tag
 from prismatic.util.data_utils import tree_map
 from prismatic.vla.action_tokenizer import ActionTokenizer
 from prismatic.vla.constants import (
-    ACTION_PROPRIO_NORMALIZATION_TYPE,
     IGNORE_INDEX,
-    NUM_ACTIONS_CHUNK,
+    NormalizationType
 )
 from prismatic.vla.datasets.rlds import make_interleaved_dataset, make_single_dataset
 from prismatic.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
@@ -71,11 +70,12 @@ class RLDSBatchTransform:
     prompt_builder_fn: Type[PromptBuilder]
     predict_stop_token: bool = True
     image_window_size: int = 1
-    future_action_window_size: int = 0
     use_wrist_image: bool = False
+    future_action_window_size: int = 0
     use_proprio: bool = False
-    print_prompt_limit: int = 20
+    print_prompt_limit: int = 10
     reasoning_dropout_prob: float = 0.0
+    base_model_type: str = "prismatic"
 
     def __call__(self, rlds_batch: Dict[str, Any]) -> Dict[str, Any]:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
@@ -105,11 +105,11 @@ class RLDSBatchTransform:
             reasoning, subset = "", ""
 
         # if there is no action horizon, remove it here.
-        if future_action_window_size == 0:
+        if self.future_action_window_size == 0:
             action = action[-1]
         else:
             # get the last FH + 1 actions (current action + future ones) if required
-            action = action[-future_action_window_size - 1 :]
+            action = action[-self.future_action_window_size - 1 :].flatten()
 
         tokenized_action = self.action_tokenizer(action)
         raw_action_tokens = self.base_tokenizer(tokenized_action)["input_ids"]
@@ -127,12 +127,13 @@ class RLDSBatchTransform:
             conversation = [
                 {"from": "human", "value": f"What action should the robot take to {lang}?"},
                 {"from": "gpt", "value": f"{reasoning} {CotTag.ACTION.value} {tokenized_action}"},
-         else:
+            ]
+        else:
             conversation = [
                 {"from": "human", "value": f"What action should the robot take to {lang}?"},
-                {"from": "gpt", "value": f"{CotTag.ACTION.value} {action_chunk_string}"},
+                {"from": "gpt", "value": f"{CotTag.ACTION.value} {tokenized_action}"},
             ]
-        num_answer_tokens = len(raw_action_tokens)
+        num_action_tokens = len(raw_action_tokens)
 
         # Construct Chat-based Prompt
         prompt_builder = self.prompt_builder_fn("openvla")
@@ -144,23 +145,30 @@ class RLDSBatchTransform:
         labels = list(input_ids)
 
         # Find the sequence of split tokens in labels
-        split_tokens = [13, 3744, 29901]  # part of tokens for "\nOut: "
+        if self.base_model_type == "prismatic":
+            split_tokens = [13, 3744, 29901]  # part of tokens for "\nOut: "
+        elif self.base_model_type == "qwen":
+            split_tokens = [151644, 77091, 198]  # part of tokens for "<|im_start|>assistant\n"
+        else:
+            raise ValueError(f"Model type {self.model_type} not supported!")
+        
+        # critical, some tokenizers have different numbers of "end tokens".
+        num_end_tokens = 1
+        if isinstance(self.base_tokenizer, Qwen2TokenizerFast):
+            # Qwen has <|im_end|><|endoftext|> for example
+            num_end_tokens = 2
+        
         for i in range(len(labels) - len(split_tokens) + 1):
             if labels[i:i+len(split_tokens)] == split_tokens:
                 split_idx = i + len(split_tokens)  # Use the end of the matched sequence
                 break
         else:
             # Fallback if sequence not found
-            split_idx = len(labels) - action_chunk_len - 1
+            print(f"Warning: No split tokens found in labels! Using fallback.")
+            split_idx = len(labels) - num_action_tokens - num_end_tokens
 
         # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
         input_ids, labels = torch.tensor(input_ids), torch.tensor(labels)
-
-        # critical, some tokenizers have different numbers of "end tokens".
-        num_end_tokens = 1
-        if isinstance(self.base_tokenizer, Qwen2TokenizerFast):
-            # Qwen has <|im_end|><|endoftext|> for example
-            num_end_tokens = 2
 
         # [CRITICAL] We do not want to take the loss for anything but the predicted action tokens!
         # labels[: -(action_chunk_len + 1)] = IGNORE_INDEX
@@ -213,11 +221,14 @@ class RLDSDataset(IterableDataset):
         image_aug: bool = False,
         window_size: Optional[int] = None,
         future_action_window_size: Optional[int] = None,
+        use_wrist_image: bool = False,
         enable_cot: bool = False,
         cot_tags: Optional[str] = None,
     ) -> None:
         """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
         self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
+        self.enable_cot = enable_cot
+        self.cot_tags = cot_tags
 
         # Configure RLDS Dataset(s)
         if self.data_mix in OXE_NAMED_MIXTURES:
@@ -225,6 +236,19 @@ class RLDSDataset(IterableDataset):
         else:
             # Assume that passed "mixture" name is actually a single dataset -- create single-dataset "mix"
             mixture_spec = [(self.data_mix, 1.0)]
+
+        load_camera_views = dict()
+        for name, _ in mixture_spec:
+            if not use_wrist_image:
+                load_camera_views[name] = ("primary",)
+                continue
+
+            if "aloha" in name or "cobot" in name:
+                load_camera_views[name] = ("primary", "left_wrist", "right_wrist")
+            elif "libero" in name:
+                load_camera_views[name] = ("primary", "wrist")
+            else:
+                raise ValueError(f"Please check the wrist image loading for {name}!")
 
         # fmt: off
         per_dataset_kwargs, weights = get_oxe_dataset_kwargs_and_weights(
@@ -245,11 +269,11 @@ class RLDSDataset(IterableDataset):
         if future_action_window_size is not None:
             future_action_window_size = future_action_window_size
         else:
-            future_action_window_size = NUM_ACTIONS_CHUNK-1
+            future_action_window_size = 0
 
         rlds_config = dict(
             traj_transform_kwargs=dict(
-                window_size=image_window_size,                        # If we wanted to feed / predict more than one step
+                window_size=window_size,                        # If we wanted to feed / predict more than one step
                 future_action_window_size=future_action_window_size,  # For action chunking
                 skip_unlabeled=True,                                  # Skip trajectories without language labels
                 goal_relabeling_strategy="uniform",                   # Goals are currently unused

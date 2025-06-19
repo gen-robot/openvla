@@ -34,12 +34,6 @@ from prismatic.training import VLAMetrics, get_train_strategy
 from prismatic.util import set_global_seed
 from prismatic.vla import get_vla_dataset_and_collator
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
-from prismatic.vla.constants import (
-    ACTION_DIM,
-    ACTION_PROPRIO_NORMALIZATION_TYPE,
-    NUM_ACTIONS_CHUNK,
-    PROPRIO_DIM,
-)
 
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -64,10 +58,9 @@ class TrainConfig:
     )
     run_root_dir: Path = Path("runs")                               # Path to directory to store logs & checkpoints
 
-    num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
-    window_size: Optional[int] = 1                   # If provided, uses a sliding window of this size to chunk the past observations and actions
-    num_actions_chunk: Optional[int] = 1             # If provided, uses a action chunk of this size to chunk the future actions
+    action_chunk_size: Optional[int] = 1             # If provided, uses a action chunk of this size to chunk the future actions
     cot_tags: Optional[str] = None                   # If provided, constructs a CoT label with these tags, separated by commas, otherwise uses all tags
+    reasoning_dropout_prob: float = 0.0              # If provided, uses a reasoning dropout of this probability
     enable_cot: bool = False                         # If True, uses COT for reasoning
 
     # Resume Run Parameters
@@ -85,12 +78,11 @@ class TrainConfig:
     seed: int = 7                                                   # Random seed (for reproducibility)
 
     # HF Hub Credentials (for any gated models)
-    hf_token: Union[str, Path] = "HF_TOKEN"                         # Environment variable or Path to HF Token
-    hf_cache_dir: Union[str, Path] = "~/.cache/huggingface/hub"     
+    hf_token: Union[str, Path] = Path(".hf_token")                  # Environment variable or Path to HF Token
 
     # Tracking Parameters
     trackers: Tuple[str, ...] = ("jsonl", "wandb")                  # Trackers to initialize (if W&B, add config!)
-    wandb_project: str = "openvla"                                  # Name of W&B project to log to (use default!)
+    wandb_project: str = "prismatic"                                  # Name of W&B project to log to (use default!)
     wandb_entity: str = None                          # Name of entity to log under
 
     def __post_init__(self) -> None:
@@ -107,6 +99,12 @@ class TrainConfig:
         self.warmup_ratio = self.vla.warmup_ratio
 
         self.train_strategy = self.vla.train_strategy
+        self.save_every_n_steps = self.vla.save_every_n_steps
+
+        self.action_tokenizer = self.vla.action_tokenizer
+
+        self.image_sequence_len = self.vla.image_sequence_len
+        self.use_wrist_image = self.vla.use_wrist_image
 
         # [Validate] Assert on `expected_world_size`
         assert (
@@ -120,13 +118,13 @@ class TrainConfig:
 def train(cfg: TrainConfig) -> None:
     overwatch.info("OpenVLA Training :: Warming Up")
 
-    if cfg.num_actions_chunk is not None:
-        cfg.future_action_window_size = cfg.num_actions_chunk - 1
-        num_actions_chunk = cfg.num_actions_chunk
+    if cfg.action_chunk_size is not None:
+        cfg.future_action_window_size = max(0, int(cfg.action_chunk_size) - 1)
     else:
-        cfg.future_action_window_size = None
-        num_actions_chunk = cfg.num_actions_chunk = NUM_ACTIONS_CHUNK
+        cfg.future_action_window_size = 0
 
+    if 'vq' in cfg.vla.action_tokenizer:
+        raise ValueError("VQ action tokenizer is not supported yet!")
 
     # Note => Under `torchrun` initializing `overwatch` will automatically set up `torch.distributed`
     torch.cuda.set_device(device_id := overwatch.local_rank())
@@ -135,14 +133,25 @@ def train(cfg: TrainConfig) -> None:
     # Configure Unique Run Name & Save Directory
     vla_id = cfg.vla.vla_id
     cfg.run_id = (
-        f"{vla_id}+n{cfg.vla.expected_world_size // 8}+b{cfg.per_device_batch_size}+x{cfg.seed}"
+        f"{vla_id}+n{cfg.vla.expected_world_size}+b{cfg.per_device_batch_size}+s{cfg.seed}"
         if cfg.run_id is None
         else cfg.run_id
     )
-    if cfg.run_id_note is not None:
-        cfg.run_id += f"--{cfg.run_id_note}"
+    if cfg.image_sequence_len > 1:
+        cfg.run_id += f"+T{cfg.image_sequence_len}"
+    if cfg.use_wrist_image:
+        cfg.run_id += "+wrist"
+    if cfg.action_chunk_size is not None:
+        cfg.run_id += f"+chunk{cfg.action_chunk_size}"
     if cfg.image_aug:
-        cfg.run_id += "--image_aug"
+        cfg.run_id += "+image_aug"
+    if cfg.enable_cot:
+        cfg.run_id += "+cot"
+    if cfg.cot_tags is not None:
+        short_tags = ",".join(["".join([_tag[0] for _tag in tag.split("_")]) for tag in cfg.cot_tags.split(",")])
+        cfg.run_id += f"+tags-{short_tags}"
+    if cfg.run_id_note is not None:
+        cfg.run_id += f"+{cfg.run_id_note}"
 
     # Start =>> Build Directories and Set Randomness
     overwatch.info('"Do or do not; there is no try."', ctx_level=1)
@@ -170,10 +179,17 @@ def train(cfg: TrainConfig) -> None:
             assert int(re.search("step-(.+?)-", cfg.pretrained_checkpoint.name).group(1)) == cfg.resume_step
             assert int(re.search("epoch-(.+?)-", cfg.pretrained_checkpoint.name).group(1)) == cfg.resume_epoch
 
-        vlm = load_vla(cfg.pretrained_checkpoint, hf_token=hf_token, load_for_training=True)
+        vlm = load_vla(
+            cfg.pretrained_checkpoint,
+            hf_token=hf_token,
+            load_for_training=True,
+            image_sequence_len=cfg.image_sequence_len,
+        )
 
     else:
-        vlm = load(cfg.vla.base_vlm, hf_token=hf_token, load_for_training=True)
+        vlm = load(
+            cfg.vla.base_vlm, hf_token=hf_token, load_for_training=True, image_sequence_len=cfg.image_sequence_len
+        )
 
     # [Validate] Model should be in Full Precision!
     for param in vlm.parameters():
@@ -218,12 +234,18 @@ def train(cfg: TrainConfig) -> None:
         tokenizer=vlm.llm_backbone.get_tokenizer(),
         prompt_builder_fn=vlm.llm_backbone.prompt_builder_fn,
         default_image_resolution=vlm.vision_backbone.default_image_resolution,
+        predict_stop_token=True,
         shuffle_buffer_size=cfg.vla.shuffle_buffer_size,
         image_aug=cfg.image_aug,
-        window_size=cfg.window_size,
+        action_tokenizer=cfg.action_tokenizer,
+        # if using wrist images, we assume we passed in a 2x image sequence len
+        image_window_size=cfg.image_sequence_len // 2 if cfg.use_wrist_image else cfg.image_sequence_len,
+        use_wrist_image=cfg.use_wrist_image,  # will double the sequence length
         future_action_window_size=cfg.future_action_window_size,
         enable_cot=cfg.enable_cot,
         cot_tags=cfg.cot_tags,
+        reasoning_dropout_prob=cfg.reasoning_dropout_prob,
+        base_model_type="qwen" if "qwen" in cfg.vla.base_vlm else "prismatic"
     )
 
     # Save dataset statistics for de-normalization at inference time
@@ -250,6 +272,7 @@ def train(cfg: TrainConfig) -> None:
         enable_mixed_precision_training=cfg.vla.enable_mixed_precision_training,
         reduce_in_full_precision=cfg.vla.reduce_in_full_precision,
         worker_init_fn=worker_init_fn,
+        save_every_n_steps=cfg.save_every_n_steps,
     )
     train_strategy.run_setup(run_dir=run_dir, n_train_examples=len(vla_dataset))
 

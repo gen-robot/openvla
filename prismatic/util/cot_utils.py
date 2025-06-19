@@ -201,14 +201,14 @@ def make_tf_hash_table_libero90(raw_dict, cot_tags=None):
                 reasoning_key = "movement"
             elif reasoning_key == "move_reason":
                 reasoning_key = "movement_reasoning"
+            elif reasoning_key == "subtask_reason":
+                reasoning_key = "subtask_reasoning"
             if reasoning_key in d.keys():
                 part = d[reasoning_key]
                 part = str(part).strip()
                 if not part.endswith("."):
                     part += "."
                 reasoning_parts.append((tag, part))
-
-        # import pdb; pdb.set_trace()
 
         return "@".join(f"{tag}@{part}" for tag, part in reasoning_parts)
 

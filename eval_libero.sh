@@ -7,7 +7,7 @@ save_unit_id=$5
 save_dir="/nvme_data/liangzhi/datasets/libero-eval-save"
 
 # mode should be one of: spatial, object, goal, 10
-if [ "$mode" != "spatial" ] && [ "$mode" != "object" ] && [ "$mode" != "goal" ] && [ "$mode" != "10" ]; then
+if [ "$mode" != "spatial" ] && [ "$mode" != "object" ] && [ "$mode" != "goal" ] && [ "$mode" != "10" ] && [ "$mode" != "90" ]; then
   echo "Invalid mode: $mode"
   exit 1
 fi
@@ -56,5 +56,6 @@ else
     --use_proprio False \
     --center_crop True \
     --num_open_loop_steps 1 \
-    --num_actions_chunk 1
+    --num_actions_chunk 1 \
+    --enable_cot True
 fi

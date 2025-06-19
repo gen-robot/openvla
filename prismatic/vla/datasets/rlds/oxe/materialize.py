@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 
 from prismatic.overwatch import initialize_overwatch
-from prismatic.vla.constants import ACTION_PROPRIO_NORMALIZATION_TYPE
+from prismatic.vla.constants import NormalizationType #ACTION_PROPRIO_NORMALIZATION_TYPE
 from prismatic.vla.datasets.rlds.oxe.configs import OXE_DATASET_CONFIGS, ActionEncoding, STATE_DIM_MAP, ACTION_DIM_MAP, VALID_DATASET_NAMES
 from prismatic.vla.datasets.rlds.oxe.transforms import OXE_STANDARDIZATION_TRANSFORMS
 
@@ -27,7 +27,7 @@ def make_oxe_dataset_kwargs(
     load_depth: bool = False,
     load_proprio: bool = True,
     load_language: bool = True,
-    action_proprio_normalization_type = ACTION_PROPRIO_NORMALIZATION_TYPE,
+    action_proprio_normalization_type = NormalizationType.BOUNDS_Q99,
 ) -> Dict[str, Any]:
     """Generates config (kwargs) for given dataset from Open-X Embodiment."""
     assert dataset_name.startswith("cobot") or dataset_name in VALID_DATASET_NAMES, \
@@ -111,7 +111,7 @@ def get_oxe_dataset_kwargs_and_weights(
     load_depth: bool = False,
     load_proprio: bool = True,
     load_language: bool = True,
-    action_proprio_normalization_type = ACTION_PROPRIO_NORMALIZATION_TYPE,
+    action_proprio_normalization_type = NormalizationType.BOUNDS_Q99,
 ) -> Tuple[Dict[str, Any], List[float]]:
     """
     Generates dataset kwargs for a given dataset mix from the Open X-Embodiment dataset. The returned kwargs
@@ -136,8 +136,6 @@ def get_oxe_dataset_kwargs_and_weights(
         included_datasets.add(d_name)
         filtered_mixture_spec.append((d_name, d_weight))
 
-    MAX_ACTION_DIM = -np.inf
-
     # Assemble Dataset Config (kwargs) and Weights
     per_dataset_kwargs, sampling_weights = [], []
     for d_name, d_weight in filtered_mixture_spec:
@@ -154,8 +152,7 @@ def get_oxe_dataset_kwargs_and_weights(
                 )
             )
             sampling_weights.append(d_weight)
-            MAX_ACTION_DIM = max(MAX_ACTION_DIM, per_dataset_kwargs[-1]["action_dim"])
         except ValueError as e:
             overwatch.warning(f"Skipping `{d_name}` due to Error: {e}")
 
-    return per_dataset_kwargs, sampling_weights, MAX_ACTION_DIM
+    return per_dataset_kwargs, sampling_weights
