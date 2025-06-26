@@ -1,32 +1,7 @@
 """
-deploy.py
-
-Provide a lightweight server/client implementation for deploying OpenVLA models (through the HF AutoClass API) over a
-REST API. This script implements *just* the server, with specific dependencies and instructions below.
-
-Note that for the *client*, usage just requires numpy/json-numpy, and requests; example usage below!
-
-Dependencies:
-    => Server (runs OpenVLA model on GPU): `pip install uvicorn fastapi json-numpy`
-    => Client: `pip install requests json-numpy`
-
-Client (Standalone) Usage (assuming a server running on 0.0.0.0:8000):
-
-```
-import requests
-import json_numpy
-json_numpy.patch()
-import numpy as np
-
-action = requests.post(
-    "http://0.0.0.0:8000/act",
-    json={"image": np.zeros((256, 256, 3), dtype=np.uint8), "instruction": "do something"}
-).json()
-
-Note that if your server is not accessible on the open web, you can use ngrok, or forward ports to your client via ssh:
-    => `ssh -L 8000:localhost:8000 ssh USER@<SERVER_IP>`
+Real world deployment script for simulation testing
 """
-
+import os
 import os.path
 
 # ruff: noqa: E402
@@ -38,11 +13,18 @@ import logging
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, Annotated, List
 
 import cv2
 import tyro
 import datetime
+
+import gymnasium as gym
+import sapien
+
+from mani_skill.envs.sapien_env import BaseEnv
+from mani_skill.utils import gym_utils
+from mani_skill.utils.wrappers import RecordEpisode
 
 import numpy as np
 import argparse
@@ -112,6 +94,7 @@ class Config:
     #################################################################################################################
     seed: int = 7                                    # Random Seed (for reproducibility)
     batch_size: int = 8                              # Batch size per device (total batch size = batch_size * num GPUs)
+    num_traj: int = 100
 
     #################################################################################################################
     # Real world
@@ -119,8 +102,25 @@ class Config:
     host: str = "0.0.0.0"                                               # Host IP Address
     port: int = 9876                                                    # Host Port
 
+    #################################################################################################################
+    # Maniskill environment parameters
+    #################################################################################################################
 
-# === Server Interface ===
+    env_id: Annotated[str, tyro.conf.arg(aliases=["-e"])] = "PushCube-v1"
+    obs_mode: Annotated[str, tyro.conf.arg(aliases=["-o"])] = "none"
+    robot_uids: Annotated[Optional[str], tyro.conf.arg(aliases=["-r"])] = None
+    sim_backend: Annotated[str, tyro.conf.arg(aliases=["-b"])] = "auto"
+    reward_mode: Optional[str] = None
+    num_envs: Annotated[int, tyro.conf.arg(aliases=["-n"])] = 1
+    control_mode: Annotated[Optional[str], tyro.conf.arg(aliases=["-c"])] = "pd_ee_target_delta_pose"
+    render_mode: str = "rgb_array"
+    shader: str = "default"
+    record_dir: Optional[str] = None
+    pause: Annotated[bool, tyro.conf.arg(aliases=["-p"])] = False
+    quiet: bool = False
+    seed: Annotated[Optional[Union[int, List[int]]], tyro.conf.arg(aliases=["-s"])] = 0
+
+
 class OpenVLAServer:
     def __init__(self, cfg: Config) -> Path:
         """
@@ -188,12 +188,11 @@ class OpenVLAServer:
             else:
                 image_full_original = image[1, :, :, :]
                 image_wrist_original = image[0, :, :, :]
-
+            
             image_primary = cv2.resize(image_full_original, (256, 256), interpolation=cv2.INTER_AREA)
             image_wrist = cv2.resize(image_wrist_original, (256, 256), interpolation=cv2.INTER_AREA)
             instruction = "Pick up the object on the table and place it into the white tray."
-            unnorm_key = "bridge_orig"
-            # unnorm_key = "panda_rlds_dataset"
+            unnorm_key = "panda_rlds_dataset"
 
             observation = {
                 "full_image": image_primary,
@@ -218,18 +217,15 @@ class OpenVLAServer:
             while len(self.vla_action_list) > 0:
                 vla_action = self.vla_action_list.pop(0)
                 vla_action[-1] = 1 - vla_action[-1]
-                if vla_action[-1] < 0.5:
-                    vla_action[-1] = 0
-                if vla_action[-1] >= 0.5:
-                    vla_action[-1] = 1
+                vla_action[-1] = 2 * vla_action[-1] - 1
                 vla_actions.append(vla_action)
 
             vla_actions = np.array(vla_actions, dtype=np.float32)
 
             if double_encode:
-                return JSONResponse(json_numpy.dumps(vla_actions))
+                return json_numpy.dumps(vla_actions)
             else:
-                return JSONResponse(vla_actions)
+                return vla_actions
         except:  # noqa: E722
             logging.error(traceback.format_exc())
             logging.warning(
@@ -240,14 +236,94 @@ class OpenVLAServer:
             )
             return "error"
 
-    def run(self, host: str = "0.0.0.0", port: int = 8000) -> None:
-        self.app = FastAPI()
-        self.app.post("/act")(self.predict_action)
-        uvicorn.run(self.app, host=host, port=port)
+    def run(self) -> None:
+        env_kwargs = dict(
+            obs_mode=self.cfg.obs_mode,
+            reward_mode=self.cfg.reward_mode,
+            control_mode=self.cfg.control_mode,
+            render_mode=self.cfg.render_mode,
+            sensor_configs=dict(shader_pack=self.cfg.shader),
+            human_render_camera_configs=dict(shader_pack=self.cfg.shader),
+            viewer_camera_configs=dict(shader_pack=self.cfg.shader),
+            sim_config=dict(control_freq=5), # currently is 20, align with data, should be carefully
+            num_envs=self.cfg.num_envs,
+            sim_backend=self.cfg.sim_backend,
+            render_backend="gpu",
+            enable_shadow=True,
+            parallel_in_single_scene=False,
+        )
+
+        if self.cfg.robot_uids is not None:
+            env_kwargs["robot_uids"] = tuple(self.cfg.robot_uids.split(","))
+        env: BaseEnv = gym.make(
+            self.cfg.env_id,
+            **env_kwargs
+        )
+
+        run_dir = f"./results/{self.cfg.env_id}/{self.timestamp}"
+        os.makedirs(run_dir, exist_ok=True)
+
+        record_dir = run_dir
+
+        record_dir = record_dir.format(env_id=self.cfg.env_id)
+        env = RecordEpisode(env, record_dir, info_on_video=False, save_trajectory=False,
+                            max_steps_per_video=200)
+
+        def clip(x, max_value):
+            """Clip the value to the range [-max_value, max_value]"""
+            return max(-max_value, min(max_value, x))
+
+        success_num = 0
+
+        for idx in range(self.cfg.num_traj):
+            episode_id = torch.randint(10000000000000, (env.num_envs,), device=env.device)
+            obs, _ = env.reset(seed=self.cfg.seed, options=dict(episode_id=episode_id, obj_set="test"))
+
+            action_list = []
+            success_check = False
+
+            max_steps = 200
+            for i in range(max_steps):
+                if len(action_list) == 0: 
+                    img_tensor = obs["sensor_data"]["c19_front_view"]["rgb"][0].to(torch.uint8).cpu().numpy()
+                    lang = "Pick up the object on the table and place it into the white tray."
+
+                    image = np.stack([img_tensor, img_tensor], axis=0)
+                    payload = {
+                        "images": image,
+                        "instruction": lang,
+                        "unnorm_key": "panda_rlds_dataset"
+                    }
+
+                    action = self.predict_action(payload)
+
+                    # save all actions into list
+                    if len(action.shape) == 1:
+                        action_list.append(action)
+                    else:
+                        for a in action:
+                            action_list.append(a)
+                
+                action = action_list.pop(0)
+                obs, reward, terminated, truncated, info = env.step(action)
+                
+                delta_pos = (env.objs_plate["001_plate_simpler"].pose.p - env.objs_carrot["001_carrot_simpler"].pose.p)[0]
+                success_check = (np.linalg.norm(delta_pos[:2]) < 0.05 and np.abs(delta_pos[2]) < 0.05)
+
+                if success_check:
+                    break
+            
+            if success_check:
+                success_num += 1
+            
+            print("Episode:", idx, "Success:", success_check, "Success Rate:", success_num / (idx + 1))
+
+
+
 
 def deploy(cfg: Config) -> None:
     server = OpenVLAServer(cfg)
-    server.run(cfg.host, port=cfg.port)
+    server.run()
 
 
 if __name__ == "__main__":

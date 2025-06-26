@@ -7,19 +7,20 @@ num_images_in_input=1               # the number of images in the input. if you 
 # it will use the original discrete action head. 
 # l1 and diffusion options cannot be both True at the same time.
 ####
-use_l1_regression=False              # if True, it will use the L1 regression head
+use_l1_regression=True              # if True, it will use the L1 regression head
 use_diffusion=False                 # if True, it will use the diffusion head
 merge_lora_during_training=False    # if True, it will merge the LoRA weights during training, which will slightly increase the GPU memory usage
-num_actions_chunk=$5                 # the number of actions to be predicted
+num_actions_chunk=$4                 # the number of actions to be predicted
 use_parallel_decoding=True         # if you use a large chunk_size, make sure you have enabled parallel decoding in the model to increase the throughput
 is_debug=False
 enable_cot=False
 use_lora=True
-cot_full=$1
-resume=$2
-vla_path=$3
-resume_step=$4
+cot_full=False
+resume=$1
+vla_path=$2
+resume_step=$3
 cot_tags="move_reason,move"
+dataset_dir=$5
 
 # if is_debug is True, set num_gpus to 1, set project name to OpenVLA-debug
 if [ ${is_debug} = True ]; then
@@ -29,7 +30,7 @@ elif [ ${enable_cot} = True ]; then
     num_gpus=2
     project_name="VLA-Reasoning"
 else
-    num_gpus=4
+    num_gpus=3
     project_name="VLA-SFT"
 fi
 
@@ -69,16 +70,16 @@ if [ ${cot_full} = True ]; then
 else
   torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune.py \
     --vla_path ${vla_path} \
-    --data_root_dir /nvme_data/liangzhi/openvla-datasets/franka_panda_pick_one_front \
+    --data_root_dir /nvme_data/liangzhi/openvla-datasets/${dataset_dir} \
     --dataset_name ${task_name} \
-    --run_root_dir checkpoints/${task_name} \
+    --run_root_dir checkpoints/${dataset_dir} \
     --use_proprio ${use_proprio} \
     --use_film ${use_film} \
     --num_images_in_input ${num_images_in_input} \
     --use_lora ${use_lora} \
     --lora_rank 32 \
     --batch_size 1 \
-    --grad_accumulation_steps 16 \
+    --grad_accumulation_steps 24 \
     --learning_rate 5e-4 \
     --image_aug False \
     --wandb_project ${project_name} \

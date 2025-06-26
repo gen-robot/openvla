@@ -89,66 +89,55 @@ class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         return {
-            'train': self._generate_examples(path='/nvme_data/liangzhi/franka-dataset/process/pick_one_front/'),
+            'train': self._generate_examples(paths=[
+                                                    '/nvme_data/liangzhi/franka-dataset/process/pick_to_plate-real/',
+                                                    '/nvme_data/liangzhi/franka-dataset/process/pick_to_plate-sim_simple/'
+                                                    ]),
         }
 
-    def _generate_examples(self, path) -> Iterator[Tuple[str, Any]]:
+    def _generate_examples(self, paths) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
+        for path in paths:
+            def _parse_example(data, task_dir, episode_id, file_path):
+                lang = data["insruction"]
+                states = data["proprio_state"][:]
+                actions = data['actions'][:]
 
-        def _parse_example(data, task_dir, episode_id, file_path):
-            lang = data["insruction"]
-            states = data["proprio_state"][:]
-            actions = data['actions'][:]
+                states = states.astype(np.float32)
+                actions = actions.astype(np.float32)
+                num_steps = len(actions)
 
-            states = states.astype(np.float32)
-            actions = actions.astype(np.float32)
-            num_steps = len(actions)
+                episode = []
+                for i in range(num_steps):
+                    episode.append({
+                        'observation': {
+                            'image': data["front_rgb"][i].astype(np.uint8),
+                            "state": states[i],
+                            'wrist_image': data["wrist_rgb"][i].astype(np.uint8),
+                        },
+                        'language_instruction': lang,
+                        'action': actions[i],
+                    })
 
-            episode = []
-            for i in range(num_steps):
-                episode.append({
-                    'observation': {
-                        'image': data["front_rgb"][i].astype(np.uint8),
-                        "state": states[i],
-                        'wrist_image': data["wrist_rgb"][i].astype(np.uint8),
-                    },
-                    'language_instruction': lang,
-                    'action': actions[i],
-                })
-
-            # create output data sample
-            sample = {
-                'steps': episode,
-                'episode_metadata': {
-                    'file_path': task_dir,
-                    'episode_id': episode_id,
+                # create output data sample
+                sample = {
+                    'steps': episode,
+                    'episode_metadata': {
+                        'file_path': task_dir,
+                        'episode_id': episode_id,
+                    }
                 }
-            }
-            return file_path, sample
+                return file_path, sample
 
-        for episode_idx in os.listdir(path):
-            episode_dir = os.path.join(path, episode_idx)
-            if not os.path.isdir(episode_dir):
-                continue
-            
-            file_path = os.path.join(episode_dir, "data.npy")
-            traj_data = np.load(file_path, allow_pickle=True).item()
+            for episode_idx in os.listdir(path):
+                episode_dir = os.path.join(path, episode_idx)
+                if not os.path.isdir(episode_dir):
+                    continue
+                
+                file_path = os.path.join(episode_dir, "data.npy")
+                traj_data = np.load(file_path, allow_pickle=True).item()
 
-            yield _parse_example(traj_data, path, episode_idx, file_path)
+                yield _parse_example(traj_data, path, episode_idx, file_path)
 
-        # for task in os.listdir(path):
-        #     if task != "StackCube-v1":
-        #         continue
-        #     task_dir = os.path.join(path, task)
-        #     file_path = glob.glob(os.path.join(task_dir, 'motionplanning', '*.h5'))[0]
-        #     lang = TASK2LANG[task]
-        #     with h5py.File(file_path, "r") as f:
-        #         trajs = f.keys() #  traj_0, traj_1,
-        #         # sort by the traj number
-        #         trajs = sorted(trajs, key=lambda x: int(x.split('_')[-1]))
-        #         for traj_idx, traj in enumerate(trajs):
-        #             if task == 'PegInsertionSide-v1' and traj_idx > 400:
-        #                 break
-        #             yield _parse_example(f[traj], task_dir, traj_idx, lang)
 
 

@@ -71,7 +71,7 @@ else
     --vla_path ${vla_path} \
     --data_root_dir /nvme_data/liangzhi/openvla-datasets/franka_panda_pick_one_front \
     --dataset_name ${task_name} \
-    --run_root_dir checkpoints/${task_name} \
+    --run_root_dir checkpoints/${dataset_dir} \
     --use_proprio ${use_proprio} \
     --use_film ${use_film} \
     --num_images_in_input ${num_images_in_input} \
