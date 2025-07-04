@@ -90,14 +90,15 @@ class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
         """Define data splits."""
         return {
             'train': self._generate_examples(paths=[
-                                                    '/nvme_data/liangzhi/franka-dataset/process/pick_to_plate-real/',
+                                                    '/nvme_data/liangzhi/franka-dataset/process/pick_to_plate_multi-real/',
                                                     '/nvme_data/liangzhi/franka-dataset/process/pick_to_plate-sim_simple/'
-                                                    ]),
+                                                    ],
+                                             max_items=[50, 1000]),
         }
 
-    def _generate_examples(self, paths) -> Iterator[Tuple[str, Any]]:
+    def _generate_examples(self, paths, max_items) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
-        for path in paths:
+        for path, max_item in zip(paths, max_items):
             def _parse_example(data, task_dir, episode_id, file_path):
                 lang = data["insruction"]
                 states = data["proprio_state"][:]
@@ -129,7 +130,11 @@ class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
                 }
                 return file_path, sample
 
+            sample_idx = 0
             for episode_idx in os.listdir(path):
+                if sample_idx >= max_item:
+                    break
+                sample_idx += 1
                 episode_dir = os.path.join(path, episode_idx)
                 if not os.path.isdir(episode_dir):
                     continue

@@ -89,6 +89,8 @@ class Config:
     window_size: Optional[int] = 1                    # If provided, uses a sliding window of this size to chunk the past observations and actions
     future_action_window_size: Optional[int] = 0      # If provided, uses a future action window of this size to chunk the future actions
     directly_resize: bool = False
+    sim_normalize: bool = False
+    do_sample: bool = False
 
     use_parallel_decoding: bool = False               # If True, uses parallel decoding inside LLaMa model's sdpa attention, i.e., replacing causal mask with bidirectional mask
     use_l1_regression: bool = False                   # If True, uses continuous action head with L1 regression objective
@@ -150,6 +152,7 @@ class OpenVLAServer:
             action_head = get_action_head(cfg, vla.llm_dim, num_actions_chunk=cfg.future_action_window_size + 1)
 
         if vla is not None:
+            # print("norm_stats:", vla.norm_stats)
             assert cfg.unnorm_key in vla.norm_stats, f"Action un-norm key {cfg.unnorm_key} not found in VLA `norm_stats`!"
 
         self.cfg = cfg
@@ -191,9 +194,12 @@ class OpenVLAServer:
 
             image_primary = cv2.resize(image_full_original, (256, 256), interpolation=cv2.INTER_AREA)
             image_wrist = cv2.resize(image_wrist_original, (256, 256), interpolation=cv2.INTER_AREA)
+            # instruction = "put carrot on plate"
+            # unnorm_key = "bridge_orig" #"pmc16384"
             instruction = "Pick up the object on the table and place it into the white tray."
-            unnorm_key = "bridge_orig"
-            # unnorm_key = "panda_rlds_dataset"
+            unnorm_key = "panda_rlds_dataset"
+
+            # print("image:", image_primary)
 
             observation = {
                 "full_image": image_primary,
@@ -206,7 +212,7 @@ class OpenVLAServer:
                     action_head=self.action_head, 
                     proprio_projector=self.proprio_projector, 
                     use_film=self.cfg.use_film, 
-                    do_sample=True,
+                    do_sample=self.cfg.do_sample,
                     enable_cot=False,
                     gt_reasoning_text=""
                 )
@@ -217,7 +223,10 @@ class OpenVLAServer:
             vla_actions = []
             while len(self.vla_action_list) > 0:
                 vla_action = self.vla_action_list.pop(0)
-                vla_action[-1] = 1 - vla_action[-1]
+                if self.cfg.sim_normalize:
+                    vla_action[-1] = (vla_action[-1] + 1) / 2
+                else:
+                    vla_action[-1] = 1 - vla_action[-1]
                 if vla_action[-1] < 0.5:
                     vla_action[-1] = 0
                 if vla_action[-1] >= 0.5:
