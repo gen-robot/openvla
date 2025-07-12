@@ -91,9 +91,9 @@ class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
         return {
             'train': self._generate_examples(paths=[
                                                     '/nvme_data/liangzhi/franka-dataset/process/pick_to_plate_multi-real/',
-                                                    '/nvme_data/liangzhi/franka-dataset/process/pick_to_plate-sim_simple/'
+                                                    '/nvme_data/liangzhi/franka-dataset/process/pick_to_plate_multi-sim/'
                                                     ],
-                                             max_items=[50, 1000]),
+                                             max_items=[50, 100]),
         }
 
     def _generate_examples(self, paths, max_items) -> Iterator[Tuple[str, Any]]:

@@ -121,6 +121,34 @@ class Config:
     seed: Annotated[Optional[Union[int, List[int]]], tyro.conf.arg(aliases=["-s"])] = 0
 
 
+object_name_dict = {
+    0: "001_carrot_simpler",
+    1: "002_kitchen shovel_1",
+    2: "003_bread_1",
+    3: "004_plastic bottle_1",
+    4: "005_7up can_1",
+    5: "006_zuchinni_1",
+    6: "007_ketchup bottle_1",
+    7: "008_watering can_1",
+    8: "009_pipe_1",
+    9: "010_toy bear_1",
+    10: "011_fast food cup_1",
+    11: "012_plant_1",
+    12: "013_banana_1",
+    13: "014_hamburger_1",
+    14: "015_golf ball_1",
+    15: "016_BBQ sauce_1",
+    16: "017_travel cup_1",
+    17: "018_pepper_1",
+    18: "019_nonstop can_1",
+    19: "020_potato_1",
+    20: "021_baguette_1",
+    21: "022_champagne glass_1",
+    22: "023_kitchen spoon_1",
+    23: "024_onion_1",
+    24: "025_cup_1",
+}
+
 class OpenVLAServer:
     def __init__(self, cfg: Config) -> Path:
         """
@@ -307,7 +335,9 @@ class OpenVLAServer:
                 action = action_list.pop(0)
                 obs, reward, terminated, truncated, info = env.step(action)
                 
-                delta_pos = (env.objs_plate["001_plate_simpler"].pose.p - env.objs_carrot["001_carrot_simpler"].pose.p)[0]
+                obj_name = object_name_dict[env.select_carrot_ids[0].item()]
+
+                delta_pos = (env.objs_plate["001_plate_simpler"].pose.p - env.objs_carrot[obj_name].pose.p)[0]
                 success_check = (np.linalg.norm(delta_pos[:2]) < 0.05 and np.abs(delta_pos[2]) < 0.05)
 
                 if success_check:
