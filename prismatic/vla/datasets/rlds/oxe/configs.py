@@ -56,6 +56,7 @@ class ActionEncoding(IntEnum):
     EEF_R6 = 4              # EEF Delta XYZ (3) + R6 (6) + Gripper Open/Close (1)
     SIX_DOF_JOINT_POS = 5   # Joint Delta Position (6) + Gripper Open/Close (1)
     # fmt: on
+    SELF_DEFINE = 6
 
 STATE_DIM_MAP = {
     StateEncoding.NONE: 0,
@@ -72,6 +73,7 @@ ACTION_DIM_MAP = {
     ActionEncoding.JOINT_POS_BIMANUAL: 14,           # Joint Delta Position (2 x [ Joint Delta Position (6) + Gripper Open/Close (1) ])
     ActionEncoding.EEF_R6: 10,                       # EEF Delta XYZ (3) + R6 (6) + Gripper Open/Close (1)
     ActionEncoding.SIX_DOF_JOINT_POS: 7,             # Joint Delta Position (6) + Gripper Open/Close (1)
+    ActionEncoding.SELF_DEFINE: 112,                   # Self-defined action encoding
 }
 
 VALID_DATASET_NAMES = [
@@ -89,6 +91,7 @@ VALID_DATASET_NAMES = [
     "libero_4_task_suites_no_noops",
     "libero_correction_object_no_noops",
     "panda_rlds_dataset",
+    "panda_chunk_rlds_dataset",
     "libero_lm_90"
 ]
 
@@ -208,6 +211,13 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["EEF_state", "gripper_state"],
         "state_encoding": StateEncoding.POS_QUAT,
         "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "panda_chunk_rlds_dataset": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["EEF_state", "gripper_state"],
+        "state_encoding": StateEncoding.POS_QUAT,
+        "action_encoding": ActionEncoding.SELF_DEFINE,
     },
     ####################################################################
     # The following configs may cause errors, since they have not been #

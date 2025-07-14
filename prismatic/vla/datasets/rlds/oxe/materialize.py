@@ -39,7 +39,7 @@ def make_oxe_dataset_kwargs(
         dataset_kwargs = deepcopy(OXE_DATASET_CONFIGS[dataset_name])
 
     if dataset_kwargs["action_encoding"] not in [
-        ActionEncoding.EEF_POS, ActionEncoding.EEF_R6, ActionEncoding.JOINT_POS, ActionEncoding.JOINT_POS_BIMANUAL
+        ActionEncoding.EEF_POS, ActionEncoding.EEF_R6, ActionEncoding.JOINT_POS, ActionEncoding.JOINT_POS_BIMANUAL, ActionEncoding.SELF_DEFINE
     ]:
         # raise ValueError(f"Cannot load `{dataset_name}`; only EEF_POS & EEF_R6 actions supported!")
         print("====================================")
@@ -61,6 +61,9 @@ def make_oxe_dataset_kwargs(
     elif dataset_kwargs["action_encoding"] is ActionEncoding.JOINT_POS_BIMANUAL:
         dataset_kwargs["absolute_action_mask"] = [True] * 14
         dataset_kwargs["action_normalization_mask"] = [True] * 14
+    elif dataset_kwargs["action_encoding"] is ActionEncoding.SELF_DEFINE:
+        dataset_kwargs["absolute_action_mask"] = ([False] * 6 + [True]) * 16
+        dataset_kwargs["action_normalization_mask"] = ([True] * 6 + [False]) * 16
 
     dataset_kwargs["action_proprio_normalization_type"] = action_proprio_normalization_type
 

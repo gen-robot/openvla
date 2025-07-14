@@ -80,6 +80,7 @@ class FinetuneConfig:
 
     window_size: Optional[int] = None                # If provided, uses a sliding window of this size to chunk the past observations and actions
     num_actions_chunk: Optional[int] = None          # If provided, uses a action chunk of this size to chunk the future actions
+    num_action_dim: Optional[int] = None             # If provided, uses a action dimension of this size to chunk the future actions
     # future_action_window_size: Optional[int] = None  # If provided, uses a future action window of this size to chunk the future actions
 
     cot_tags: Optional[str] = None                   # If provided, constructs a CoT label with these tags, separated by commas, otherwise uses all tags
@@ -1006,6 +1007,10 @@ def finetune(cfg: FinetuneConfig) -> None:
     # Initialize wandb logging
     if distributed_state.is_main_process and not cfg.is_debug:
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=run_id)
+
+    if cfg.num_action_dim is not None:
+        global ACTION_DIM
+        ACTION_DIM = cfg.num_action_dim
 
     # Print detected constants
     print(
