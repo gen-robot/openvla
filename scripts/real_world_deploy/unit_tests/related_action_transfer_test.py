@@ -212,21 +212,12 @@ class OpenVLAServer:
 
     def predict_action(self, payload: Dict[str, Any]) -> str:
         try:
-            if double_encode := "encoded" in payload:
-                # Support cases where `json_numpy` is hard to install, and numpy arrays are "double-encoded" as strings
-                assert len(payload.keys()) == 1, "Only uses encoded payload!"
-                payload = json.loads(payload["encoded"])
-
             # Parse payload components
             image, instruction = payload["images"], payload["instruction"]
             unnorm_key = payload.get("unnorm_key", None)
 
-            if not self.cfg.directly_resize:
-                image_full_original = image[1, 40:520, :, :]
-                image_wrist_original = image[0, 80:560, :, :]
-            else:
-                image_full_original = image[1, :, :, :]
-                image_wrist_original = image[0, :, :, :]
+            image_full_original = image[1, :, :, :]
+            image_wrist_original = image[0, :, :, :]
 
             image_primary = cv2.resize(image_full_original, (256, 256), interpolation=cv2.INTER_AREA)
             image_wrist = cv2.resize(image_wrist_original, (256, 256), interpolation=cv2.INTER_AREA)
@@ -253,7 +244,6 @@ class OpenVLAServer:
                     gt_reasoning_text=""
                 )
 
-                # TODO: will get a 112 dim action, should change to 16*7 and compute the delta action
                 vla_action_chunk = np.array(vla_action_chunk, dtype=np.float32).reshape(-1, 7)
                 vla_action_chunk = change_to_delta_action(vla_action_chunk)
 
@@ -276,10 +266,7 @@ class OpenVLAServer:
 
             vla_actions = np.array(vla_actions, dtype=np.float32)
 
-            if double_encode:
-                return JSONResponse(json_numpy.dumps(vla_actions))
-            else:
-                return JSONResponse(vla_actions)
+            print("vla_actions:", vla_actions)
         except:  # noqa: E722
             logging.error(traceback.format_exc())
             logging.warning(
@@ -290,15 +277,21 @@ class OpenVLAServer:
             )
             return "error"
 
-    def run(self, host: str = "0.0.0.0", port: int = 8000) -> None:
-        self.app = FastAPI()
-        self.app.post("/act")(self.predict_action)
-        uvicorn.run(self.app, host=host, port=port)
-
 def deploy(cfg: Config) -> None:
     server = OpenVLAServer(cfg)
-    server.run(cfg.host, port=cfg.port)
 
+    data_path = "/nvme_data/liangzhi/franka-dataset/process-for-action-rep/euler/related/pick_to_plate-real/episode_0/data.npy"
+    data = np.load(data_path, allow_pickle=True).item()
+    image_front = data["front_rgb"][0]
+    image_wrist = data["wrist_rgb"][0]
+    images = np.stack([image_wrist, image_front], axis=0)
+
+    test_dict = {
+        "instruction": "Pick up the object on the table and place it into the white tray.",
+        "images": images,
+    }
+
+    server.predict_action(test_dict)
 
 if __name__ == "__main__":
     cfg = tyro.cli(Config)
