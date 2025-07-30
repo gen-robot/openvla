@@ -30,6 +30,8 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 import random
 import wandb
 
+import gc
+
 from experiments.robot.openvla_utils import (
     check_model_logic_mismatch,
     model_is_on_hf_hub,
@@ -366,7 +368,7 @@ def run_forward_pass(
     metrics = {}
 
     # Get ground-truth action labels
-    ground_truth_actions = batch["actions"].to(device_id).to(torch.bfloat16)
+    ground_truth_actions = batch["actions"].clone().to(device_id).to(torch.bfloat16)
 
     # [Only for diffusion] Sample noisy actions used as input for noise predictor network
     if use_diffusion:
@@ -382,12 +384,12 @@ def run_forward_pass(
     # VLA forward pass
     with torch.autocast("cuda", dtype=torch.bfloat16):
         output: CausalLMOutputWithPast = vla(
-            input_ids=batch["input_ids"].to(device_id),
-            attention_mask=batch["attention_mask"].to(device_id),
-            pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
-            labels=batch["labels"],
+            input_ids=batch["input_ids"].clone().to(device_id),
+            attention_mask=batch["attention_mask"].clone().to(device_id),
+            pixel_values=batch["pixel_values"].clone().to(torch.bfloat16).to(device_id),
+            labels=batch["labels"].clone(),
             output_hidden_states=True,
-            proprio=batch["proprio"] if use_proprio else None,
+            proprio=batch["proprio"].clone() if use_proprio else None,
             proprio_projector=proprio_projector if use_proprio else None,
             noisy_actions=noisy_actions if use_diffusion else None,
             noisy_action_projector=noisy_action_projector if use_diffusion else None,
@@ -397,7 +399,7 @@ def run_forward_pass(
         )
 
     # Get action masks needed for logging
-    ground_truth_token_ids = batch["labels"][:, 1:].to(device_id)
+    ground_truth_token_ids = batch["labels"][:, 1:].clone().to(device_id)
     current_action_mask = get_current_action_mask(
         ground_truth_token_ids, 
         action_token_begin_idx=action_tokenizer.action_token_begin_idx)
@@ -467,11 +469,11 @@ def run_forward_pass(
                         while input_idx < batch["labels"].shape[1] and batch["labels"][0, input_idx] == -100:
                             input_idx += 1
                         pred_continuous_actions, generated_ids, predicted_action_token_ids = vla.module.predict_action_autoregressive_without_unnormalized(
-                            input_ids=batch["input_ids"][:1, :input_idx].to(device_id),
-                            attention_mask=batch["attention_mask"][:1, :input_idx].to(device_id),
-                            pixel_values=batch["pixel_values"][:1].to(torch.bfloat16).to(device_id),
+                            input_ids=batch["input_ids"][:1, :input_idx].clone().to(device_id),
+                            attention_mask=batch["attention_mask"][:1, :input_idx].clone().to(device_id),
+                            pixel_values=batch["pixel_values"][:1].clone().to(torch.bfloat16).to(device_id),
                             do_sample=False,
-                            proprio=batch["proprio"][:1] if use_proprio else None,
+                            proprio=batch["proprio"][:1].clone() if use_proprio else None,
                             proprio_projector=proprio_projector if use_proprio else None,
                             noisy_action_projector=noisy_action_projector if use_diffusion else None,
                             use_film=use_film,
@@ -646,12 +648,12 @@ def run_diffusion_sampling(
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
             output = vla(
-                input_ids=batch["input_ids"].to(device_id),
-                attention_mask=batch["attention_mask"].to(device_id),
-                pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
-                labels=batch["labels"],
+                input_ids=batch["input_ids"].clone().to(device_id),
+                attention_mask=batch["attention_mask"].clone().to(device_id),
+                pixel_values=batch["pixel_values"].clone().to(torch.bfloat16).to(device_id),
+                labels=batch["labels"].clone(),
                 output_hidden_states=True,
-                proprio=batch["proprio"] if use_proprio else None,
+                proprio=batch["proprio"].clone() if use_proprio else None,
                 proprio_projector=proprio_projector if use_proprio else None,
                 noisy_actions=curr_noisy_actions,
                 noisy_action_projector=noisy_action_projector,
@@ -1348,7 +1350,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     # Start training
     with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
         vla.train()
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         for batch_idx, batch in enumerate(dataloader):
             
             if cfg.use_correction and random.random() < 0.5:
@@ -1439,7 +1441,7 @@ def finetune(cfg: FinetuneConfig) -> None:
             if (batch_idx + 1) % cfg.grad_accumulation_steps == 0:
                 optimizer.step()
                 scheduler.step()
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True) # Debuging, for memory leaking
                 progress.update()
 
             # Save model checkpoint: either keep latest checkpoint only or all checkpoints
@@ -1483,6 +1485,9 @@ def finetune(cfg: FinetuneConfig) -> None:
             if log_step == cfg.max_steps:
                 print(f"Max step {cfg.max_steps} reached! Stopping training...")
                 break
+            
+            gc.collect()
+            torch.cuda.empty_cache()
 
         # At the end of the training loop, before saving the final model
         if cfg.enable_cot and distributed_state.is_main_process and cot_log_dir:

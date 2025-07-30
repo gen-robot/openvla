@@ -757,6 +757,7 @@ def get_vla_action(
     cot_tags: Optional[str] = None,
     gt_reasoning_text: Optional[str] = None,
     is_debug: bool = False,
+    debug_cnt: int = 0,
 ) -> List[np.ndarray]:
     """
     Generate action predictions with the VLA policy.
@@ -827,6 +828,11 @@ def get_vla_action(
             all_wrist_pixel_values = [wrist_inputs["pixel_values"] for wrist_inputs in all_wrist_inputs]
             inputs["pixel_values"] = torch.cat([primary_pixel_values] + all_wrist_pixel_values, dim=1)
 
+        if is_debug:
+            inputs["pixel_values"] = torch.load(f"/home/liangzhi/work-space/openvla/scripts/real_world_deploy/pixel_values/pixel_values_{debug_cnt}.pt")
+
+            print("pixel_values_load:", inputs["pixel_values"], inputs["pixel_values"].shape, inputs["pixel_values"].dtype)
+
         # Process proprioception data if used
         proprio = None
         if cfg.use_proprio:
@@ -835,42 +841,48 @@ def get_vla_action(
             obs["state"] = normalize_proprio(proprio, proprio_norm_stats)
             proprio = obs["state"]
 
-        if is_debug:
-            import copy
-            total_count = 0
-            next_success_count = 0
-            next_10_success_count = 0
-            next_50_success_count = 0
-            next_100_success_count = 0
-            next_200_success_count = 0
-            for idx in range(100, 300):
-                clone_inputs = copy.deepcopy(inputs)
-                clone_inputs["input_ids"] = clone_inputs["input_ids"][:, :idx]
-                clone_inputs["attention_mask"] = clone_inputs["attention_mask"][:, :idx]
+        # if is_debug:
+        #     import copy
+        #     total_count = 0
+        #     next_success_count = 0
+        #     next_10_success_count = 0
+        #     next_50_success_count = 0
+        #     next_100_success_count = 0
+        #     next_200_success_count = 0
+        #     for idx in range(100, 300):
+        #         clone_inputs = copy.deepcopy(inputs)
+        #         clone_inputs["input_ids"] = clone_inputs["input_ids"][:, :idx]
+        #         clone_inputs["attention_mask"] = clone_inputs["attention_mask"][:, :idx]
 
-                test_action, text_generated_ids = vla.predict_action_autoregressive(
-                    **clone_inputs, 
-                    unnorm_key=cfg.unnorm_key, 
-                    do_sample=do_sample,
-                    proprio=proprio,
-                    proprio_projector=proprio_projector,
-                    noisy_action_projector=noisy_action_projector,
-                    use_film=use_film,
-                    action_head=action_head,
-                )
-                print("Check out:", text_generated_ids[0, idx - 5: idx + 5], inputs["input_ids"][0, idx - 5: idx + 5])
-                total_count += 1
-                if text_generated_ids.shape[1] > idx and text_generated_ids[0, idx] == inputs["input_ids"][0, idx]:
-                    next_success_count += 1
-                if text_generated_ids.shape[1] > idx + 9 and text_generated_ids[0, idx + 9] == inputs["input_ids"][0, idx + 9]:
-                    next_10_success_count += 1
-                if text_generated_ids.shape[1] > idx + 49 and text_generated_ids[0, idx + 49] == inputs["input_ids"][0, idx + 49]:
-                    next_50_success_count += 1
-                if text_generated_ids.shape[1] > idx + 99 and text_generated_ids[0, idx + 99] == inputs["input_ids"][0, idx + 99]:
-                    next_100_success_count += 1
-                if text_generated_ids.shape[1] > idx + 199 and text_generated_ids[0, idx + 199] == inputs["input_ids"][0, idx + 199]:
-                    next_200_success_count += 1
-                print(f"check: {next_success_count} / {total_count}, {next_10_success_count} / {total_count}, {next_50_success_count} / {total_count}, {next_100_success_count} / {total_count}, {next_200_success_count} / {total_count}.")
+        #         test_action, text_generated_ids = vla.predict_action_autoregressive(
+        #             **clone_inputs, 
+        #             unnorm_key=cfg.unnorm_key, 
+        #             do_sample=do_sample,
+        #             proprio=proprio,
+        #             proprio_projector=proprio_projector,
+        #             noisy_action_projector=noisy_action_projector,
+        #             use_film=use_film,
+        #             action_head=action_head,
+        #         )
+        #         print("Check out:", text_generated_ids[0, idx - 5: idx + 5], inputs["input_ids"][0, idx - 5: idx + 5])
+        #         total_count += 1
+        #         if text_generated_ids.shape[1] > idx and text_generated_ids[0, idx] == inputs["input_ids"][0, idx]:
+        #             next_success_count += 1
+        #         if text_generated_ids.shape[1] > idx + 9 and text_generated_ids[0, idx + 9] == inputs["input_ids"][0, idx + 9]:
+        #             next_10_success_count += 1
+        #         if text_generated_ids.shape[1] > idx + 49 and text_generated_ids[0, idx + 49] == inputs["input_ids"][0, idx + 49]:
+        #             next_50_success_count += 1
+        #         if text_generated_ids.shape[1] > idx + 99 and text_generated_ids[0, idx + 99] == inputs["input_ids"][0, idx + 99]:
+        #             next_100_success_count += 1
+        #         if text_generated_ids.shape[1] > idx + 199 and text_generated_ids[0, idx + 199] == inputs["input_ids"][0, idx + 199]:
+        #             next_200_success_count += 1
+        #         print(f"check: {next_success_count} / {total_count}, {next_10_success_count} / {total_count}, {next_50_success_count} / {total_count}, {next_100_success_count} / {total_count}, {next_200_success_count} / {total_count}.")
+
+        # print("inputs:", inputs.keys(), inputs["input_ids"], inputs["attention_mask"])
+
+        # inputs["attention_mask"] = torch.cat(
+        #     (inputs["attention_mask"], torch.unsqueeze(torch.Tensor([1]).long(), dim=0).to(inputs["attention_mask"].device)), dim=1
+        # )
 
         # Generate action
         action, generated_ids = vla.predict_action(
@@ -882,6 +894,7 @@ def get_vla_action(
             noisy_action_projector=noisy_action_projector,
             use_film=use_film,
             action_head=action_head,
+            # temperature=0.6, # For eval
         )
     # Extract subset of actions for open loop steps
     if gemini_cot_annotator is not None:

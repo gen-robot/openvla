@@ -21,6 +21,7 @@ vla_path=$2
 resume_step=$3
 cot_tags="move_reason,move"
 dataset_dir=$5
+shuffle_buffer_size=$6
 
 # if is_debug is True, set num_gpus to 1, set project name to OpenVLA-debug
 if [ ${is_debug} = True ]; then
@@ -30,7 +31,7 @@ elif [ ${enable_cot} = True ]; then
     num_gpus=2
     project_name="VLA-Reasoning"
 else
-    num_gpus=3
+    num_gpus=4
     project_name="VLA-SFT"
 fi
 
@@ -79,7 +80,7 @@ else
     --use_lora ${use_lora} \
     --lora_rank 32 \
     --batch_size 1 \
-    --grad_accumulation_steps 24 \
+    --grad_accumulation_steps 16 \
     --learning_rate 5e-4 \
     --image_aug False \
     --wandb_project ${project_name} \
@@ -94,6 +95,7 @@ else
     --save_freq 1000 \
     --val_freq 500 \
     --resume ${resume} \
-    --resume_step ${resume_step}
+    --resume_step ${resume_step} \
+    --shuffle_buffer_size ${shuffle_buffer_size}
   #   --cot_tags ${cot_tags}
 fi

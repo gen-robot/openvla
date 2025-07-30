@@ -92,7 +92,7 @@ class PandaRldsDatasetForActionRep(tfds.core.GeneratorBasedBuilder):
             'train': self._generate_examples(paths=[
                                                     '/nvme_data/liangzhi/franka-dataset/process-for-action-rep/euler/related/pick_to_plate-real'
                                                     ],
-                                             max_items=[50, 100]),
+                                             max_items=[50]),
         }
 
     def _generate_examples(self, paths, max_items) -> Iterator[Tuple[str, Any]]:

@@ -1,4 +1,4 @@
-task_name="panda_chunk_rlds_dataset"
+task_name="panda_rlds_dataset"
 use_film=False                      # if True, it will inject the language instruction into the visual encoder via FiLM
 use_proprio=False                    # if True, it will use the proprioceptive sensor data, which would be useful for L1 regression or diffusion head
 num_images_in_input=1               # the number of images in the input. if you want to use wrist images, set it to 3 or whatever you want.
@@ -95,6 +95,6 @@ else
     --val_freq 500 \
     --resume ${resume} \
     --resume_step ${resume_step} \
-    --num_action_dim 112
+    --num_action_dim 7
   #   --cot_tags ${cot_tags}
 fi

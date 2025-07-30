@@ -333,7 +333,10 @@ class RLDSDataset(IterableDataset):
                     continue
                 yield ret
             except StopIteration:
-                return
+                # Restart the iterator if we reach the end of the dataset
+                overwatch.info("Reached end of dataset, restarting iterator.")
+                iterator = self.dataset.as_numpy_iterator()
+                continue
             except (tf.errors.DataLossError, tf.errors.InvalidArgumentError, tf.errors.FailedPreconditionError) as e:
                 overwatch.warning(f"Skipping corrupted record: {e}")
                 continue
