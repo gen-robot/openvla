@@ -79,8 +79,8 @@ else
     --num_images_in_input ${num_images_in_input} \
     --use_lora ${use_lora} \
     --lora_rank 32 \
-    --batch_size 1 \
-    --grad_accumulation_steps 16 \
+    --batch_size 4 \
+    --grad_accumulation_steps 4 \
     --learning_rate 5e-4 \
     --image_aug False \
     --wandb_project ${project_name} \

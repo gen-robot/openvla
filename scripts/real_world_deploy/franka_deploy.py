@@ -88,7 +88,7 @@ class Config:
 
     window_size: Optional[int] = 1                    # If provided, uses a sliding window of this size to chunk the past observations and actions
     future_action_window_size: Optional[int] = 0      # If provided, uses a future action window of this size to chunk the future actions
-    directly_resize: bool = False
+    pic_process: str = "cut"
     sim_normalize: bool = False
     do_sample: bool = False
 
@@ -185,12 +185,17 @@ class OpenVLAServer:
             image, instruction = payload["images"], payload["instruction"]
             unnorm_key = payload.get("unnorm_key", None)
 
-            if not self.cfg.directly_resize:
+            if self.cfg.pic_process == "cut":
                 image_full_original = image[1, 40:520, :, :]
                 image_wrist_original = image[0, 80:560, :, :]
-            else:
+            elif self.cfg.pic_process == "origin":
                 image_full_original = image[1, :, :, :]
                 image_wrist_original = image[0, :, :, :]
+            elif self.cfg.pic_process == "pad":
+                image_full_original = np.zeros((640, 640, 3), dtype=np.uint8)
+                image_wrist_original = np.zeros((640, 640, 3), dtype=np.uint8)
+                image_full_original[80:560, :, :] = image[1, :, :, :]
+                image_wrist_original[80:560, :, :] = image[0, :, :, :]
 
             image_primary = cv2.resize(image_full_original, (256, 256), interpolation=cv2.INTER_AREA)
             image_wrist = cv2.resize(image_wrist_original, (256, 256), interpolation=cv2.INTER_AREA)
