@@ -58,7 +58,7 @@ def get_openvla_prompt(instruction: str) -> str:
 
 @dataclass
 class Config:
-    name: str = "panda_rlds_dataset"
+    name: str = "panda_rlds_dataset_sim"
 
     #################################################################################################################
     # Model-specific parameters
@@ -94,7 +94,7 @@ class Config:
     #################################################################################################################
     seed: int = 7                                    # Random Seed (for reproducibility)
     batch_size: int = 8                              # Batch size per device (total batch size = batch_size * num GPUs)
-    num_traj: int = 100
+    num_traj: int = 10
 
     #################################################################################################################
     # Real world
@@ -112,7 +112,7 @@ class Config:
     sim_backend: Annotated[str, tyro.conf.arg(aliases=["-b"])] = "auto"
     reward_mode: Optional[str] = None
     num_envs: Annotated[int, tyro.conf.arg(aliases=["-n"])] = 1
-    control_mode: Annotated[Optional[str], tyro.conf.arg(aliases=["-c"])] = "pd_ee_target_delta_pose"
+    control_mode: Annotated[Optional[str], tyro.conf.arg(aliases=["-c"])] = "pd_ee_body_target_delta_pose"
     render_mode: str = "rgb_array"
     shader: str = "default"
     record_dir: Optional[str] = None
@@ -120,34 +120,7 @@ class Config:
     quiet: bool = False
     seed: Annotated[Optional[Union[int, List[int]]], tyro.conf.arg(aliases=["-s"])] = 0
 
-
-object_name_dict = {
-    0: "001_carrot_simpler",
-    1: "002_kitchen shovel_1",
-    2: "003_bread_1",
-    3: "004_plastic bottle_1",
-    4: "005_7up can_1",
-    5: "006_zuchinni_1",
-    6: "007_ketchup bottle_1",
-    7: "008_watering can_1",
-    8: "009_pipe_1",
-    9: "010_toy bear_1",
-    10: "011_fast food cup_1",
-    11: "012_plant_1",
-    12: "013_banana_1",
-    13: "014_hamburger_1",
-    14: "015_golf ball_1",
-    15: "016_BBQ sauce_1",
-    16: "017_travel cup_1",
-    17: "018_pepper_1",
-    18: "019_nonstop can_1",
-    19: "020_potato_1",
-    20: "021_baguette_1",
-    21: "022_champagne glass_1",
-    22: "023_kitchen spoon_1",
-    23: "024_onion_1",
-    24: "025_cup_1",
-}
+import mani_skill.examples.mimic_gen_data_generator.utils.env_utils as EnvUtils
 
 class OpenVLAServer:
     def __init__(self, cfg: Config) -> Path:
@@ -219,8 +192,8 @@ class OpenVLAServer:
             
             image_primary = cv2.resize(image_full_original, (256, 256), interpolation=cv2.INTER_AREA)
             image_wrist = cv2.resize(image_wrist_original, (256, 256), interpolation=cv2.INTER_AREA)
-            instruction = "Pick up the object on the table and place it into the white tray."
-            unnorm_key = "panda_rlds_dataset"
+            instruction = "Open the drawer on the table."
+            unnorm_key = "panda_rlds_dataset_sim"
 
             observation = {
                 "full_image": image_primary,
@@ -314,13 +287,13 @@ class OpenVLAServer:
             for i in range(max_steps):
                 if len(action_list) == 0: 
                     img_tensor = obs["sensor_data"]["c19_front_view"]["rgb"][0].to(torch.uint8).cpu().numpy()
-                    lang = "Open the drawer on the table."
+                    lang = "Pick up the object on the table and place it into the white tray."
 
                     image = np.stack([img_tensor, img_tensor], axis=0)
                     payload = {
                         "images": image,
                         "instruction": lang,
-                        "unnorm_key": "panda_rlds_dataset"
+                        "unnorm_key": "panda_rlds_dataset_sim"
                     }
 
                     action = self.predict_action(payload)
@@ -334,21 +307,22 @@ class OpenVLAServer:
                 
                 action = action_list.pop(0)
                 obs, reward, terminated, truncated, info = env.step(action)
-                
-                obj_name = object_name_dict[env.select_carrot_ids[0].item()]
 
-                delta_pos = (env.objs_plate["001_plate_simpler"].pose.p - env.objs_carrot[obj_name].pose.p)[0]
-                success_check = (np.linalg.norm(delta_pos[:2]) < 0.05 and np.abs(delta_pos[2]) < 0.05)
+                success_check = EnvUtils.check_task_success(env, self.cfg.env_id)
 
                 if success_check:
                     break
-            
+
             if success_check:
                 success_num += 1
             
             print("Episode:", idx, "Success:", success_check, "Success Rate:", success_num / (idx + 1))
 
+            save_file = f"{record_dir}/result.txt"
 
+            # save success rate into result.txt
+            with open(save_file, "w") as f:
+                f.write(f"Episode: {idx}, Success Rate: {success_num / (idx + 1)} ({success_num} / {(idx + 1)})\n")
 
 
 def deploy(cfg: Config) -> None:

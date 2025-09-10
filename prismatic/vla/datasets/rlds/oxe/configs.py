@@ -91,6 +91,8 @@ VALID_DATASET_NAMES = [
     "libero_4_task_suites_no_noops",
     "libero_correction_object_no_noops",
     "panda_rlds_dataset",
+    "panda_rlds_dataset_real",
+    "panda_rlds_dataset_sim",
     "panda_chunk_rlds_dataset",
     "libero_lm_90"
 ]
@@ -206,6 +208,20 @@ OXE_DATASET_CONFIGS = {
     #                                                                  #
     ####################################################################
     "panda_rlds_dataset": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["EEF_state", "gripper_state"],
+        "state_encoding": StateEncoding.POS_QUAT,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "panda_rlds_dataset_real": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["EEF_state", "gripper_state"],
+        "state_encoding": StateEncoding.POS_QUAT,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "panda_rlds_dataset_sim": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", "gripper_state"],

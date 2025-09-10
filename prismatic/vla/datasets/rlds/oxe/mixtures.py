@@ -229,5 +229,33 @@ OXE_NAMED_MIXTURES: Dict[str, List[Tuple[str, float]]] = {
     "aloha1_put_X_into_pot_300_demos": [
         ("aloha1_put_X_into_pot_300_demos", 1.0),
     ],
+
+    # === Panda sim-real co-training
+    "panda_co_training_0.0": [
+        ("panda_rlds_dataset_real", 1.0)
+    ],
+    "panda_co_training_1.0": [
+        ("panda_rlds_dataset_sim", 1.0)
+    ],
+    "panda_co_training_0.5": [
+        ("panda_rlds_dataset_real", 1.0),
+        ("panda_rlds_dataset_sim", 1.0)
+    ],
+    "panda_co_training_0.8": [
+        ("panda_rlds_dataset_real", 1.0),
+        ("panda_rlds_dataset_sim", 4.0)
+    ],
+    "panda_co_training_0.9": [
+        ("panda_rlds_dataset_real", 1.0),
+        ("panda_rlds_dataset_sim", 9.0)
+    ],
+    "panda_co_training_0.95": [
+        ("panda_rlds_dataset_real", 1.0),
+        ("panda_rlds_dataset_sim", 20.0)
+    ],
+    "panda_co_training_0.99": [
+        ("panda_rlds_dataset_real", 1.0),
+        ("panda_rlds_dataset_sim", 99.0)
+    ]
 # fmt: on
 }

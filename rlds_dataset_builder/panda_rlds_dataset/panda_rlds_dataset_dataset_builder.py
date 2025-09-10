@@ -79,9 +79,9 @@ class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
                     'action': tfds.features.Tensor(shape=(7,), dtype=np.float32),
                     'language_instruction': tfds.features.Text(doc='Language instruction for the task.'),
                     'observation': tfds.features.FeaturesDict({
-                        'image': tfds.features.Image(shape=(640, 640, 3), dtype=np.uint8),
+                        'image': tfds.features.Image(shape=(480, 480, 3), dtype=np.uint8),
                         'state': tfds.features.Tensor(shape=(8,), dtype=np.float32),
-                        'wrist_image': tfds.features.Image(shape=(640, 640, 3), dtype=np.uint8),
+                        'wrist_image': tfds.features.Image(shape=(480, 480, 3), dtype=np.uint8),
                     }),
                 }),
             }))
@@ -90,10 +90,10 @@ class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
         """Define data splits."""
         return {
             'train': self._generate_examples(paths=[
-                                                    '/nvme_data/liangzhi/franka-dataset/process/square/',
-                                                    # '/nvme_data/liangzhi/franka-dataset/process/pick_to_plate_multi-sim-mimicgen/'
+                                                    # '/nvme_data/liangzhi/franka-dataset/process/square/',
+                                                    '/mnt/public/shiliangzhi/franka-dataset/process/pick_to_plate/',
                                                     ],
-                                             max_items=[15]),
+                                             max_items=[50]),
         }
 
     def _generate_examples(self, paths, max_items) -> Iterator[Tuple[str, Any]]:

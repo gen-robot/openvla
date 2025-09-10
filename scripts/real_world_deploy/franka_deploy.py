@@ -76,7 +76,7 @@ def get_openvla_prompt(instruction: str) -> str:
 
 @dataclass
 class Config:
-    name: str = "panda_rlds_dataset"
+    name: str = "panda_rlds_dataset_real"
 
     #################################################################################################################
     # Model-specific parameters
@@ -202,7 +202,7 @@ class OpenVLAServer:
             # instruction = "put carrot on plate"
             # unnorm_key = "bridge_orig" #"pmc16384"
             instruction = "Pick up the object on the table and place it into the white tray."
-            unnorm_key = "panda_rlds_dataset"
+            unnorm_key = "panda_rlds_dataset_real"
 
             # print("image:", image_primary)
 
