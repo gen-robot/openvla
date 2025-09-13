@@ -1,21 +1,15 @@
 """
-finetune_amcr.py
-
-Finetune OpenVLA-OFT with adaptive mixture co-training ratio.
-TODO:
-1. Add evaluation in simulation during training, return success rate.
-2. Implement adaptive mixture co-training ratio application in training loop.
-3. Design a ratio decay logic & upgrade base evalution logic.
+dataset_statistics_pre_compute.py
+To precompute dataset statistics & save.
 """
 
 import os
 import time
-import json
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Type, Any, Union, Annotated, List
+from typing import Dict, Optional, Tuple, Type
 
 import draccus
 import torch
@@ -36,14 +30,6 @@ import random
 import wandb
 
 import gc
-import cv2
-import numpy as np
-import gymnasium as gym
-
-from mani_skill.envs.sapien_env import BaseEnv
-from mani_skill.utils import gym_utils
-from mani_skill.utils.wrappers import RecordEpisode
-import mani_skill.examples.mimic_gen_data_generator.utils.env_utils as EnvUtils
 
 from experiments.robot.openvla_utils import (
     check_model_logic_mismatch,
@@ -84,8 +70,6 @@ from prismatic.vla.constants import (
 from prismatic.vla.datasets import RLDSBatchTransform, RLDSDataset, RLDSDatasetForCoTraining
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
 
-import imageio
-
 # Sane Defaults
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -108,7 +92,6 @@ class FinetuneConfig:
     dataset_name: str = "aloha_scoop_x_into_bowl"    # Name of fine-tuning dataset (e.g., `aloha_scoop_x_into_bowl`)
     run_root_dir: Path = Path("runs")                # Path to directory to store logs & checkpoints
     shuffle_buffer_size: int = 100_000               # Dataloader shuffle buffer size (can reduce if OOM errors occur)
-    dataset_statistics_path: Optional[Path] = None   # If provided, path to dataset statistics .json file (computed with `save_dataset_statistics`)
 
     # Algorithm and architecture
     use_parallel_decoding: bool = True               # If True, uses parallel decoding inside LLaMa model's sdpa attention, i.e., replacing causal mask with bidirectional mask
@@ -135,7 +118,7 @@ class FinetuneConfig:
     resume: bool = False                             # If True, resumes from checkpoint
     resume_step: Optional[int] = None                # (When `resume==True`) Step number that we are resuming from
     image_aug: bool = True                           # If True, trains with image augmentations (HIGHLY RECOMMENDED)
-    diffusion_sample_freq: int = 10                  # (When `use_diffusion==True`) Frequency for sampling in steps
+    diffusion_sample_freq: int = 50                  # (When `use_diffusion==True`) Frequency for sampling in steps
 
     # LoRA
     use_lora: bool = True                            # If True, uses LoRA fine-tuning
@@ -152,45 +135,6 @@ class FinetuneConfig:
     run_id_override: Optional[str] = None            # Optional string to override the run ID with
     wandb_log_freq: int = 10                         # WandB logging frequency in steps
     is_debug: bool = False                           # If True, runs in debug mode, disables wandb logging
-
-
-    ### Config for simulator evaluation ###
-
-    # Simulation environments
-    env_id: str = "PushCube-v1"
-    obs_mode: str = "none"
-    robot_uids: Optional[str] = None
-    sim_backend: str = "auto"
-    reward_mode: Optional[str] = None
-    num_envs: int = 1
-    control_mode: Optional[str] = "pd_ee_body_target_delta_pose"
-    render_mode: str = "rgb_array"
-    shader: str = "default"
-    record_dir: Optional[str] = None
-    pause: bool = False
-    quiet: bool = False
-    seed: Optional[Union[int, List[int]]] = 0
-    episode_max_steps: int = 200
-
-    # Deployment
-    image_mode: str = "cut"
-    image_cut_start: int = 40
-    center_crop: bool = True                         # Center crop? (if trained w/ random crop image aug)
-    num_open_loop_steps: int = 4                    # Number of actions to execute open-loop before requerying policy
-
-    # Training 
-    sim_eval_freq: int = 2000
-    sim_eval_episodes: int = 20
-
-    ### Adaptive Mixture Co-Training Ratio Config ###
-    initial_ratio_value: float = 5.0                 # 1 - 10^a
-    decay_rate: float = 0.9
-    time_decay_step: float = 1.0
-    backward_rate: float = 0.5
-    ema_config: float = 0.6
-    epsilon_success_rate: float = 1e-3
-    adaptive_ratio: bool = True
-    fixed_ratio_value: float = 0.9
 
 
 def remove_ddp_in_checkpoint(state_dict) -> dict:
@@ -932,7 +876,7 @@ def run_validation(
     avg_val_metrics["val_batches_count"] = val_batches_count
 
     # Log validation metrics to W&B
-    if distributed_state.is_main_process and not cfg.is_debug:
+    if distributed_state.is_main_process:
         log_metrics_to_wandb(avg_val_metrics, "VLA Val", log_step, wandb)
 
     # Generate plots periodically during training (every 5 validation runs)
@@ -944,12 +888,8 @@ def run_validation(
             print(f"Error plotting CoT accuracy curves: {e}")
 
 
-# TODO: save the render video
 def do_simulation_evaluation(
     cfg,
-    run_dir,
-    log_step,
-    device_id,
     vla,
     processor,
     proprio_projector,
@@ -959,10 +899,8 @@ def do_simulation_evaluation(
     action_stats,
     distributed_state,
 ):
-    num_traj = cfg.sim_eval_episodes
+    num_traj = cfg.sim_num_episodes
     success_num = 0
-
-    render_dir = Path(str(run_dir)) / f"sim_eval_videos-{log_step}"
 
     for traj_idx in range(num_traj):
         episode_id = torch.randint(10000000000000, (env.num_envs,), device=env.device)
@@ -971,7 +909,6 @@ def do_simulation_evaluation(
         success_check = False
         action_list = []
         max_steps = cfg.episode_max_steps
-        render_list = []
 
         for step in range(max_steps):
             if len(action_list) == 0:
@@ -981,7 +918,7 @@ def do_simulation_evaluation(
                 image = np.stack([img_tensor, img_tensor], axis=0)
                 language_instruction = env.get_language_instruction()[0] # TODO: should apply the function in environment
                 if cfg.image_mode == "cut":
-                    image_full_original = image[1, cfg.image_cut_start:cfg.image_cut_start + 480, :, :]
+                    image_full_original = image[1, cfg.image_cut_start:image_cut_start + 480, :, :]
                     image_wrist_original = image[0, 80:560, :, :]
                 else:
                     raise NotImplementedError
@@ -1002,31 +939,12 @@ def do_simulation_evaluation(
                     do_sample=True,
                     enable_cot=False,
                     action_stats=action_stats,
-                    is_train=True,
-                    device_id=device_id,
                 )
 
                 for vla_action in vla_action_chunk:
                     vla_action[-1] = 1 - vla_action[-1]
                     vla_action[-1] = 2 * vla_action[-1] - 1
                     action_list.append(vla_action)
-            
-            action = action_list.pop(0)
-            obs, reward, terminated, truncated, info = env.step(action)
-            render_list.append(env.render().cpu().numpy()[0])
-
-            success_check = EnvUtils.check_task_success(env, cfg.env_id)
-
-            if success_check:
-                break
-        
-        if success_check:
-            success_num += 1
-        
-        # Save video
-        os.makedirs(render_dir, exist_ok=True)
-        video_path = render_dir / f"traj_{device_id}_{traj_idx}_success_{int(success_check)}.mp4"
-        imageio.mimwrite(video_path, np.array(render_list), fps=20, quality=8)
 
     return success_num / num_traj if num_traj > 0 else 0.0
 
@@ -1047,298 +965,17 @@ def finetune(cfg: FinetuneConfig) -> None:
     Returns:
         None.
     """
-    # assert cfg.use_lora, "Only LoRA fine-tuning is supported. Please set --use_lora=True!"
-    assert not (cfg.use_l1_regression and cfg.use_diffusion), (
-        "Cannot do both L1 regression and diffusion. Please pick one of them!"
-    )
-    assert not (cfg.use_parallel_decoding and cfg.enable_cot), (
-        "Cannot use parallel decoding and CoT at the same time! Disable PD when training with CoT."
-    )
-    assert (cfg.shuffle_buffer_size % (cfg.batch_size * cfg.grad_accumulation_steps) == 0), (
-        "Shuffle buffer size must be divisible by the effective batch size (batch_size * grad_accumulation_steps)!"
-    )
-    cfg.sim_eval_freq = cfg.shuffle_buffer_size // (cfg.batch_size * cfg.grad_accumulation_steps)
-
     # Trim trailing forward slash ('/') in VLA path if it exists
     cfg.vla_path = cfg.vla_path.rstrip("/")
     print(f"Fine-tuning OpenVLA Model `{cfg.vla_path}` on `{cfg.dataset_name}`")
 
-    if cfg.num_actions_chunk is not None:
-        cfg.future_action_window_size = cfg.num_actions_chunk - 1
-        num_actions_chunk = cfg.num_actions_chunk
-    else:
-        cfg.future_action_window_size = None
-        num_actions_chunk = cfg.num_actions_chunk = NUM_ACTIONS_CHUNK
-
-    # Get experiment run ID
-    run_id = get_run_id(cfg) if not cfg.is_debug else "debug"
-
-    # GPU setup
-    distributed_state = PartialState()
-    device_id = distributed_state.local_process_index
-    torch.cuda.set_device(device_id)
-    torch.cuda.empty_cache()
-
-    # Get distributed training parameters from environment variables
-    # These are set by torchrun when launching the script
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
-    local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", 1))
-    
-    print(f"Distributed training configuration:")
-    print(f"\tTotal number of nodes (WORLD_SIZE): {world_size}")
-    print(f"\tProcesses per node (LOCAL_WORLD_SIZE): {local_world_size}")
-    
-    # Calculate total number of GPUs being used
-    total_gpus = world_size
-    print(f"\tTotal number of GPUs: {total_gpus}")
-    
-    # Calculate effective batch size
-    effective_batch_size = cfg.batch_size * cfg.grad_accumulation_steps * total_gpus
-    print(f"\tEffective batch size: {effective_batch_size}")
-
-    run_id = f"oft+g{world_size}tb{effective_batch_size}+{run_id}"
-
-    # Create experiment run directory
-    run_dir = cfg.run_root_dir / run_id
-    os.makedirs(run_dir, exist_ok=True)
-
-    # Create a directory named by timestamp to separate different runs
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = run_dir / f"{timestamp}"
-    os.makedirs(run_dir, exist_ok=True)
-
-    # Create a directory for CoT logs if needed
-    cot_log_dir = os.path.join(run_dir, "cot_logs") if cfg.enable_cot else None
-    if cot_log_dir and distributed_state.is_main_process:
-        os.makedirs(cot_log_dir, exist_ok=True)
-
-    # Initialize wandb logging
-    if distributed_state.is_main_process and not cfg.is_debug:
-        wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=run_id)
-
-    if cfg.num_action_dim is not None:
-        global ACTION_DIM
-        ACTION_DIM = cfg.num_action_dim
-
-    # Print detected constants
-    print(
-        f"{'='*50}\n"
-        "Detected constants:\n"
-        f"\tNUM_ACTIONS_CHUNK: {num_actions_chunk}\n"
-        f"\tACTION_DIM: {ACTION_DIM}\n"
-        f"\tPROPRIO_DIM: {PROPRIO_DIM}\n"
-        f"\tACTION_PROPRIO_NORMALIZATION_TYPE: {ACTION_PROPRIO_NORMALIZATION_TYPE}\n"
-        f"{'='*50}\n"
-    )
-
-    # IMPORTANT: Register OpenVLA classes FIRST before any file operations
-    # This ensures classes are available when HF tries to load them
-    print(f"[Rank {distributed_state.process_index}] Registering OpenVLA classes...")
-    AutoConfig.register("openvla", OpenVLAConfig)
-    AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
-    AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-    AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
-    print(f"[Rank {distributed_state.process_index}] OpenVLA classes registered successfully")
-    
-    # Ensure all processes have registered the classes
-    dist.barrier()
-    print(f"[Rank {distributed_state.process_index}] All processes have registered classes")
-
-    # Update config.json and sync model files
-    if distributed_state.is_main_process:
-        update_auto_map(cfg.vla_path)
-        check_model_logic_mismatch(cfg.vla_path)
-
-    # Wait for model files to be synced across all processes
-    # This is critical for distributed training on shared filesystems
-    dist.barrier()
-    print(f"[Rank {distributed_state.process_index}] File synchronization completed")
-    
-    # Add additional delay to ensure file system sync (especially important for NFS/distributed filesystems)
-    time.sleep(2)
-    
-    # Verify files exist before proceeding
-    required_files = ["modeling_prismatic.py", "configuration_prismatic.py", "config.json"]
-    for file_name in required_files:
-        file_path = os.path.join(cfg.vla_path, file_name)
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Required file {file_path} not found on rank {distributed_state.process_index}")
-        print(f"[Rank {distributed_state.process_index}] Verified {file_name} exists")
-    
-    # Verify that the OpenVLAForActionPrediction class is accessible in the modeling file
-    modeling_file_path = os.path.join(cfg.vla_path, "modeling_prismatic.py")
-    try:
-        with open(modeling_file_path, 'r') as f:
-            modeling_content = f.read()
-            if "class OpenVLAForActionPrediction" not in modeling_content:
-                raise ValueError(f"OpenVLAForActionPrediction class not found in {modeling_file_path} on rank {distributed_state.process_index}")
-            print(f"[Rank {distributed_state.process_index}] Verified OpenVLAForActionPrediction class exists in modeling file")
-    except Exception as e:
-        print(f"[Rank {distributed_state.process_index}] Error verifying modeling file: {e}")
-        raise
-        
-    # Final barrier to ensure all processes have verified files
-    dist.barrier()
-    print(f"[Rank {distributed_state.process_index}] All processes verified files, proceeding to model loading")
-    
-    # Load processor and VLA
-    print(f"[Rank {distributed_state.process_index}] Loading processor from {cfg.vla_path}")
     processor = PrismaticProcessor.from_pretrained(cfg.vla_path, trust_remote_code=True)
-    print(f"[Rank {distributed_state.process_index}] Processor loaded successfully")
-    
-    print(f"[Rank {distributed_state.process_index}] Loading VLA model from {cfg.vla_path}")
-    try:
-        vla = OpenVLAForActionPrediction.from_pretrained(
-            cfg.vla_path,
-            torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=True,
-            trust_remote_code=True,
-        ).to(device_id)
-        print(f"[Rank {distributed_state.process_index}] VLA model loaded successfully")
-    except Exception as e:
-        print(f"[Rank {distributed_state.process_index}] ERROR loading VLA model: {type(e).__name__}: {e}")
-        print(f"[Rank {distributed_state.process_index}] Model path: {cfg.vla_path}")
-        print(f"[Rank {distributed_state.process_index}] Available files: {os.listdir(cfg.vla_path)}")
-        raise
-
-    # Set number of images in VLA input
-    vla.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
-    vla.set_output_format(num_actions_chunk, ACTION_DIM)
-
-    if cfg.use_parallel_decoding:
-        vla.enable_parallel_decoding()
-
-    # LoRA setup
-    if cfg.use_lora:
-        lora_config = LoraConfig(
-            r=cfg.lora_rank,
-            lora_alpha=min(cfg.lora_rank, 16),
-            lora_dropout=cfg.lora_dropout,
-            target_modules="all-linear",
-            init_lora_weights="gaussian",
-        )
-        vla = get_peft_model(vla, lora_config)
-        vla.print_trainable_parameters()
-
-    # FiLM setup
-    if cfg.use_film:
-        count_parameters(vla.vision_backbone, "vla.vision_backbone (original)")
-        # Wrap vision backbone with FiLM wrapper
-        # Important: For this, must specify `vla.model.vision_backbone` instead of just `vla.vision_backbone`, since the
-        # latter would cause the new wrapped backbone to be saved as a new attribute of `vla` instead of overwriting the
-        # original one (due to the LoRA wrapper)
-        vla_model = vla.model if cfg.use_lora else vla
-        vla_model.vision_backbone = FiLMedPrismaticVisionBackbone(
-            vision_backbone=vla_model.vision_backbone,
-            llm_dim=vla.llm_dim,
-        )
-        count_parameters(vla.vision_backbone, "vla.vision_backbone (post-wrap)")
-        if cfg.resume:
-            state_dict = load_checkpoint("vision_backbone", cfg.vla_path, cfg.resume_step)
-            vla_model.vision_backbone.load_state_dict(state_dict)
-        vla_model.vision_backbone = vla_model.vision_backbone.to(device_id)
-
-
-    # Wrap VLA with DDP
-    vla = wrap_ddp(vla, device_id, find_unused=True)
-
-    # If applicable, instantiate proprio projector
-    if cfg.use_proprio:
-        proprio_projector = init_module(
-            ProprioProjector,
-            "proprio_projector",
-            cfg,
-            device_id,
-            {"llm_dim": vla.module.llm_dim, "proprio_dim": PROPRIO_DIM},
-        )
-
-    # If applicable, instantiate continuous action head for L1 regression
-    if cfg.use_l1_regression:
-        action_head = init_module(
-            L1RegressionActionHead,
-            "action_head",
-            cfg,
-            device_id,
-            {
-                "input_dim": vla.module.llm_dim,
-                "hidden_dim": vla.module.llm_dim,
-                "action_dim": ACTION_DIM,
-                "num_actions_chunk": num_actions_chunk,
-            },
-            to_bf16=True,
-        )
-
-    # If applicable, instantiate diffusion action head and noisy action projector
-    if cfg.use_diffusion:
-        action_head = init_module(
-            DiffusionActionHead,
-            "action_head",
-            cfg,
-            device_id,
-            {
-                "input_dim": vla.module.llm_dim,
-                "hidden_dim": vla.module.llm_dim,
-                "action_dim": ACTION_DIM,
-                "num_actions_chunk": num_actions_chunk,
-                "num_diffusion_steps": cfg.num_diffusion_steps,
-            },
-            to_bf16=True,
-        )
-        noisy_action_projector = init_module(
-            NoisyActionProjector, "noisy_action_projector", cfg, device_id, {"llm_dim": vla.module.llm_dim}
-        )
-
-    # Get number of vision patches
-    NUM_PATCHES = vla.module.vision_backbone.get_num_patches() * vla.module.vision_backbone.get_num_images_in_input()
-    # If we have proprio inputs, a single proprio embedding is appended to the end of the vision patch embeddings
-    if cfg.use_proprio:
-        NUM_PATCHES += 1
-    # For diffusion, a single diffusion timestep embedding is appended to the end of the vision patch embeddings
-    if cfg.use_diffusion:
-        NUM_PATCHES += 1
-
-    # Instantiate optimizer
-    trainable_params = [param for param in vla.parameters() if param.requires_grad]
-    if cfg.use_l1_regression or cfg.use_diffusion:
-        trainable_params += [param for param in action_head.parameters() if param.requires_grad]
-    if cfg.use_diffusion:
-        trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
-    if cfg.use_proprio:
-        trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
-    print(f"# total trainable params: {sum(p.numel() for p in trainable_params)}")
-    optimizer = AdamW(trainable_params, lr=cfg.learning_rate)
-
-    # Record original learning rate
-    original_lr = optimizer.param_groups[0]["lr"]
-
-    # Create learning rate scheduler
-    scheduler = MultiStepLR(
-        optimizer,
-        milestones=[cfg.num_steps_before_decay],  # Number of steps after which LR will change
-        gamma=0.1,  # Multiplicative factor of learning rate decay
-    )
 
     # Create Action Tokenizer
     action_tokenizer = ActionTokenizer(processor.tokenizer)
 
     # We assume that the model takes as input one third-person camera image and 1 or 2 optional wrist camera image(s)
     use_wrist_image = cfg.num_images_in_input > 1
-
-    # Initialize mixture ratio
-    def get_ratio_from_decay_value(decay_val):
-        return 1.0 - 10 ** (-cfg.initial_ratio_value * (cfg.decay_rate ** decay_val))
-
-    decay_value = 0
-    optimal_decay_value = 0
-    ema_success_rate = cfg.epsilon_success_rate
-    optimal_success_rate = cfg.epsilon_success_rate
-
-    # Load dataset statistics 
-    assert cfg.data_root_dir is not None, "Please specify dataset root directory via --data_root_dir"
-    with open(os.path.join(cfg.dataset_statistics_path, "dataset_statistics.json"), "r") as f:
-        saved_dataset_statistics = json.load(f)
-    
-    action_stats = saved_dataset_statistics["action"]
 
     # Create training and optional validation datasets
     batch_transform = RLDSBatchTransform(
@@ -1350,255 +987,22 @@ def finetune(cfg: FinetuneConfig) -> None:
         use_proprio=cfg.use_proprio,
         history_size=0, #cfg.window_size - 1 if cfg.window_size is not None else 0
     )
-    initial_ratio = get_ratio_from_decay_value(decay_value)
-    if not cfg.adaptive_ratio:
-        initial_ratio = cfg.fixed_ratio_value
-    
-    train_dataset = RLDSDatasetForCoTraining(
+    train_dataset = RLDSDataset(
         cfg.data_root_dir,
         cfg.dataset_name,
         batch_transform,
-        resize_resolution=tuple(vla.module.config.image_sizes),
+        resize_resolution=tuple((224, 224)),
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
         window_size=cfg.window_size,
-        future_action_window_size=cfg.future_action_window_size,
+        future_action_window_size=15,
         enable_cot=cfg.enable_cot,
         cot_tags=cfg.cot_tags,
-        mixture_ratio=initial_ratio,
-        dataset_statistics=saved_dataset_statistics,
     )
 
-    # [Important] Save dataset statistics so that we can unnormalize actions during inference
-    if distributed_state.is_main_process:
-        save_dataset_statistics(train_dataset.dataset_statistics, run_dir)
-
-    # Create collator and dataloader
-    collator = PaddedCollatorForActionPrediction(
-        processor.tokenizer.model_max_length, processor.tokenizer.pad_token_id, padding_side="right"
-    )
-    dataloader = DataLoader(
-        train_dataset,
-        batch_size=cfg.batch_size,
-        sampler=None,
-        collate_fn=collator,
-        num_workers=0,  # Important: Set to 0 if using RLDS, which uses its own parallelism
-    )
-
-    # Deque to store recent train metrics (used for computing smoothened metrics for gradient accumulation)
-    recent_metrics = {
-        "loss_value": deque(maxlen=cfg.grad_accumulation_steps),
-        "curr_action_accuracy": deque(maxlen=cfg.grad_accumulation_steps),
-        "curr_action_l1_loss": deque(maxlen=cfg.grad_accumulation_steps),
-        "next_actions_accuracy": deque(maxlen=cfg.grad_accumulation_steps),
-        "next_actions_l1_loss": deque(maxlen=cfg.grad_accumulation_steps),
-    }
-
-    # Create simulation environment for validation
-    env_kwargs = dict(
-        obs_mode=cfg.obs_mode,
-        reward_mode=cfg.reward_mode,
-        control_mode=cfg.control_mode,
-        render_mode=cfg.render_mode,
-        sensor_configs=dict(shader_pack=cfg.shader),
-        human_render_camera_configs=dict(shader_pack=cfg.shader),
-        viewer_camera_configs=dict(shader_pack=cfg.shader),
-        sim_config=dict(control_freq=5), # currently is 20, align with data, should be carefully
-        num_envs=cfg.num_envs,
-        sim_backend=cfg.sim_backend,
-        render_backend="gpu",
-        enable_shadow=True,
-        parallel_in_single_scene=False,
-    )
-
-    if cfg.robot_uids is not None:
-        env_kwargs["robot_uids"] = tuple(cfg.robot_uids.split(","))
-    env: BaseEnv = gym.make(
-        cfg.env_id,
-        **env_kwargs
-    )
-    
-    # Start training
-    with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
-        vla.train()
-        optimizer.zero_grad(set_to_none=True)
-        batch_idx = -1
-        train_iter = (cfg.max_steps - 1) // (cfg.grad_accumulation_steps * cfg.sim_eval_freq) + 1
-        for epoch in range(train_iter):
-            for batch in dataloader:
-                # Compute gradient step index
-                batch_idx += 1
-                gradient_step_idx = batch_idx // cfg.grad_accumulation_steps
-                log_step = gradient_step_idx if not cfg.resume else cfg.resume_step + gradient_step_idx
-
-                # Compute training metrics and loss
-                compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
-
-                loss, metrics = run_forward_pass(
-                    cfg=cfg,
-                    batch_idx=batch_idx,
-                    vla=vla,
-                    processor=processor,
-                    action_head=action_head if (cfg.use_diffusion or cfg.use_l1_regression) else None,
-                    noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
-                    proprio_projector=proprio_projector if cfg.use_proprio else None,
-                    batch=batch,
-                    action_tokenizer=action_tokenizer,
-                    device_id=device_id,
-                    use_l1_regression=cfg.use_l1_regression,
-                    use_diffusion=cfg.use_diffusion,
-                    use_proprio=cfg.use_proprio,
-                    use_film=cfg.use_film,
-                    num_patches=NUM_PATCHES,
-                    compute_diffusion_l1=compute_diffusion_l1,
-                    num_diffusion_steps=cfg.num_diffusion_steps if cfg.use_diffusion else None,
-                    num_actions_chunk=num_actions_chunk,
-                    enable_cot=cfg.enable_cot,
-                    cot_log_dir=cot_log_dir,
-                    current_step=log_step,
-                    is_main_process=distributed_state.is_main_process,
-                )
-
-                # Normalize loss to account for gradient accumulation
-                normalized_loss = loss / cfg.grad_accumulation_steps
-
-                # Backward pass
-                normalized_loss.backward()
-
-                # Store recent train metrics
-                for metric_name, value in metrics.items():
-                    if metric_name in recent_metrics:
-                        recent_metrics[metric_name].append(value)
-                    else:
-                        recent_metrics[metric_name] = deque(maxlen=cfg.grad_accumulation_steps)
-                        recent_metrics[metric_name].append(value)
-
-                # Compute gradient step index
-                gradient_step_idx = batch_idx // cfg.grad_accumulation_steps
-
-                # Compute smoothened train metrics
-                smoothened_metrics = compute_smoothened_metrics(recent_metrics)
-
-                # Push Metrics to W&B (every wandb_log_freq gradient steps)
-                log_step = gradient_step_idx if not cfg.resume else cfg.resume_step + gradient_step_idx
-                if distributed_state.is_main_process and log_step % cfg.wandb_log_freq == 0 and not cfg.is_debug:
-                    log_metrics_to_wandb(smoothened_metrics, "VLA Train", log_step, wandb)
-
-                # [If applicable] Linearly warm up learning rate from 10% to 100% of original
-                if cfg.lr_warmup_steps > 0:
-                    lr_progress = min((gradient_step_idx + 1) / cfg.lr_warmup_steps, 1.0)  # Cap at 1.0
-                    current_lr = original_lr * (0.1 + 0.9 * lr_progress)
-                    for param_group in optimizer.param_groups:
-                        param_group["lr"] = current_lr
-
-                if distributed_state.is_main_process and gradient_step_idx % cfg.wandb_log_freq == 0 and not cfg.is_debug:
-                    # Log the learning rate
-                    # Make sure to do this AFTER any learning rate modifications (e.g., warmup/decay)
-                    wandb.log(
-                        {
-                            "VLA Train/Learning Rate": scheduler.get_last_lr()[0],
-                        },
-                        step=log_step,
-                    )
-
-                # Optimizer and LR scheduler step
-                if (batch_idx + 1) % cfg.grad_accumulation_steps == 0:
-                    optimizer.step()
-                    scheduler.step()
-                    optimizer.zero_grad(set_to_none=True) # Debuging, for memory leaking
-                    progress.update()
-
-                # Save model checkpoint: either keep latest checkpoint only or all checkpoints
-                if gradient_step_idx > 0 and log_step % cfg.save_freq == 0:
-                    save_training_checkpoint(
-                        cfg=cfg,
-                        run_dir=run_dir,
-                        log_step=log_step,
-                        vla=vla,
-                        processor=processor,
-                        proprio_projector=proprio_projector if cfg.use_proprio else None,
-                        noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
-                        action_head=action_head if (cfg.use_l1_regression or cfg.use_diffusion) else None,
-                        train_dataset=train_dataset,
-                        distributed_state=distributed_state,
-                    )
-
-                # Stop training when max_steps is reached
-                if log_step == cfg.max_steps:
-                    print(f"Max step {cfg.max_steps} reached! Stopping training...")
-                    break
-                
-                gc.collect()
-                torch.cuda.empty_cache()
-            
-            vla.eval()
-            with torch.no_grad():
-                sim_success_rate = do_simulation_evaluation(
-                    cfg=cfg,
-                    run_dir=run_dir,
-                    log_step=log_step,
-                    device_id=device_id,
-                    vla=vla,
-                    processor=processor,
-                    proprio_projector=proprio_projector if cfg.use_proprio else None,
-                    noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
-                    action_head=action_head if (cfg.use_l1_regression or cfg.use_diffusion) else None,
-                    env=env,
-                    action_stats=action_stats,
-                    distributed_state=distributed_state,
-                )
-
-            success_tensor = torch.tensor(sim_success_rate, dtype=torch.float32, device=device_id)
-            dist.all_reduce(success_tensor, op=dist.ReduceOp.AVG)
-            sim_success_rate = success_tensor.item()
-
-            ema_success_rate = cfg.ema_config * sim_success_rate + (1 - cfg.ema_config) * ema_success_rate
-            if ema_success_rate > optimal_success_rate:
-                optimal_success_rate = ema_success_rate
-                optimal_decay_value = decay_value
-            
-            decay_value += cfg.time_decay_step
-            decay_value += cfg.backward_rate * (optimal_decay_value - decay_value) * (1.0 - ema_success_rate / optimal_success_rate)
-
-            next_ratio = get_ratio_from_decay_value(decay_value)
-            if not cfg.adaptive_ratio:
-                next_ratio = cfg.fixed_ratio_value
-
-            # Log result: sim_sr/ema_sr/opt_sr dv/opt_dv ratio
-            if distributed_state.is_main_process and not cfg.is_debug:
-                wandb.log(
-                    {
-                        "VLA Sim Eval/Success Rate": sim_success_rate,
-                        "VLA Sim Eval/EMA Success Rate": ema_success_rate,
-                        "VLA Sim Eval/Optimal Success Rate": optimal_success_rate,
-                        "VLA Sim Eval/Decay Value": decay_value,
-                        "VLA Sim Eval/Optimal Decay Value": optimal_decay_value,
-                        "VLA Sim Eval/Mixture Ratio": next_ratio,
-                    },
-                    step=log_step,
-                )
-
-            train_dataset.adjust_mixture_ratio(next_ratio)
-            vla.train()
-
-        # At the end of the training loop, before saving the final model
-        if cfg.enable_cot and distributed_state.is_main_process and cot_log_dir:
-            plot_cot_accuracy_curves(cot_log_dir)
-            print(f"Final CoT accuracy curves plotted and saved to {cot_log_dir}/plots")
-
-        # Save the final model
-        save_training_checkpoint(
-            cfg=cfg,
-            run_dir=run_dir,
-            log_step=log_step,
-            vla=vla,
-            processor=processor,
-            proprio_projector=proprio_projector if cfg.use_proprio else None,
-            noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
-            action_head=action_head if (cfg.use_l1_regression or cfg.use_diffusion) else None,
-            train_dataset=train_dataset,
-            distributed_state=distributed_state,
-        )
+    run_dir = Path("./datasets_stats")
+    os.makedirs(run_dir, exist_ok=True)
+    save_dataset_statistics(train_dataset.dataset_statistics, run_dir)
 
 
 if __name__ == "__main__":

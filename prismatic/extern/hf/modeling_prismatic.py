@@ -851,9 +851,13 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
 
         return labels
 
-    def _unnormalize_actions(self, normalized_actions, unnorm_key=None):
+    def _unnormalize_actions(self, normalized_actions, unnorm_key=None, action_stats=None):
         """Unnormalize actions using dataset statistics"""
-        action_norm_stats = self.get_action_stats(unnorm_key)
+        if action_stats is not None:
+            # accept custom action norm stats
+            action_norm_stats = action_stats
+        else:
+            action_norm_stats = self.get_action_stats(unnorm_key)
 
         if ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
             mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["min"], dtype=bool))
@@ -1057,6 +1061,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         action_head=None,
         noisy_action_projector=None,
         use_film: bool = False,
+        action_stats: Optional[Dict] = None,
         **kwargs: str,
     ) -> np.ndarray:
         """Predict actions from input sequence, with options for different prediction methods.
@@ -1160,7 +1165,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
             )
 
         # Unnormalize predicted actions
-        actions = self._unnormalize_actions(normalized_actions, unnorm_key)
+        actions = self._unnormalize_actions(normalized_actions, unnorm_key, action_stats)
 
         return actions, actions_hidden_states
         

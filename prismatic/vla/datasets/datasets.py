@@ -290,7 +290,7 @@ class RLDSDataset(IterableDataset):
             dataset_kwargs_list=per_dataset_kwargs,
             shuffle_buffer_size=shuffle_buffer_size,
             sample_weights=weights,
-            balance_weights=True,
+            balance_weights=False,
             traj_transform_threads=len(mixture_spec),
             traj_read_threads=len(mixture_spec),
             train=train,
@@ -337,6 +337,175 @@ class RLDSDataset(IterableDataset):
                 overwatch.info("Reached end of dataset, restarting iterator.")
                 iterator = self.dataset.as_numpy_iterator()
                 continue
+            except (tf.errors.DataLossError, tf.errors.InvalidArgumentError, tf.errors.FailedPreconditionError) as e:
+                overwatch.warning(f"Skipping corrupted record: {e}")
+                continue
+
+    def __len__(self) -> int:
+        return self.dataset_length
+
+    # === Explicitly Unused ===
+    def __getitem__(self, idx: int) -> None:
+        raise NotImplementedError("IterableDataset does not implement map-style __getitem__; see __iter__ instead!")
+
+
+# TODO: can change mixture ratio, and remake self.dataset
+class RLDSDatasetForCoTraining(IterableDataset):
+    def __init__(
+        self,
+        data_root_dir: Path,
+        data_mix: str,
+        batch_transform: RLDSBatchTransform,
+        resize_resolution: Tuple[int, int],
+        shuffle_buffer_size: int = 256_000,
+        train: bool = True,
+        image_aug: bool = False,
+        window_size: Optional[int] = None,
+        future_action_window_size: Optional[int] = None,
+        enable_cot: bool = False,
+        cot_tags: Optional[str] = None,
+        mixture_ratio: float = 0.999,
+        dataset_statistics: Optional[dict] = None,
+    ) -> None:
+        """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
+        self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
+        self.enable_cot = enable_cot
+        self.cot_tags = cot_tags
+        self.mixture_ratio = mixture_ratio
+
+        if window_size is not None:
+            window_size = window_size
+        else:
+            window_size = 1
+
+        if future_action_window_size is not None:
+            future_action_window_size = future_action_window_size
+        else:
+            future_action_window_size = NUM_ACTIONS_CHUNK-1
+        
+        self.window_size = window_size
+        self.future_action_window_size = future_action_window_size
+        self.resize_resolution = resize_resolution
+        self.shuffle_buffer_size = shuffle_buffer_size
+        self.train = train
+        self.image_aug = image_aug
+
+        # Configure RLDS Dataset(s)
+        if self.data_mix in OXE_NAMED_MIXTURES:
+            mixture_spec = OXE_NAMED_MIXTURES[self.data_mix]
+        else:
+            assert False, "Co-training algorithm should have both simulation and real-world data!"
+
+        assert dataset_statistics is not None, "Since co-training has two different datasets, a pre-computed dataset statistics is required!"
+
+        self.single_dataset_statistics = dataset_statistics
+        self.mixture_spec = mixture_spec
+
+        # fmt: off
+        self.load_camera_views = dict()
+        for name, _ in self.mixture_spec:
+            if "aloha" in name or "cobot" in name:
+                self.load_camera_views[name] = ("primary", "left_wrist", "right_wrist")
+            elif "libero" in name or "panda" in name:
+                self.load_camera_views[name] = ("primary", "wrist")
+            elif "bridge" in name:
+                self.load_camera_views[name] = ("primary",)
+            else:
+                self.load_camera_views[name] = ("primary",)
+
+        rlds_config = self.get_rlds_config()
+
+        # Initialize RLDS Dataset
+        self.dataset, self.dataset_length, self.dataset_statistics = self.make_dataset(rlds_config)
+
+    def get_rlds_config(self):
+        # Adjust weights according to mixture_ratio
+        for i in range(len(self.mixture_spec)):
+            name, weight = self.mixture_spec[i]
+            if "real" in name:
+                self.mixture_spec[i] = (name, 1.0)
+            elif "sim" in name:
+                self.mixture_spec[i] = (name, self.mixture_ratio / (1.0 - self.mixture_ratio))
+
+        per_dataset_kwargs, weights, MAX_ACTION_DIM = get_oxe_dataset_kwargs_and_weights(
+            self.data_root_dir,
+            self.mixture_spec,
+            load_camera_views=self.load_camera_views,
+            load_depth=False,
+            load_proprio=True,
+            load_language=True,
+            action_proprio_normalization_type=ACTION_PROPRIO_NORMALIZATION_TYPE,
+        )
+
+        for i in range(len(per_dataset_kwargs)):
+            per_dataset_kwargs[i]['dataset_statistics'] = self.single_dataset_statistics
+
+        rlds_config = dict(
+            traj_transform_kwargs=dict(
+                window_size=self.window_size,                            # If we wanted to feed / predict more than one step
+                future_action_window_size=self.future_action_window_size,              # For action chunking
+                skip_unlabeled=True,                                # Skip trajectories without language labels
+                goal_relabeling_strategy="uniform",                 # Goals are currently unused
+            ),
+            frame_transform_kwargs=dict(
+                resize_size=self.resize_resolution,
+                num_parallel_calls=16,                          # For CPU-intensive ops (decoding, resizing, etc.)
+            ),
+            dataset_kwargs_list=per_dataset_kwargs,
+            shuffle_buffer_size=self.shuffle_buffer_size,
+            sample_weights=weights,
+            balance_weights=False,
+            traj_transform_threads=len(self.mixture_spec),
+            traj_read_threads=len(self.mixture_spec),
+            train=self.train,
+            max_action_dim=MAX_ACTION_DIM,
+        )
+
+        print("RLDS Config: ", rlds_config)
+
+        # If applicable, enable image augmentations
+        if self.image_aug:
+            rlds_config["frame_transform_kwargs"].update({"image_augment_kwargs" : dict(
+                random_resized_crop=dict(scale=[0.9, 0.9], ratio=[1.0, 1.0]),
+                random_brightness=[0.2],
+                random_contrast=[0.8, 1.2],
+                random_saturation=[0.8, 1.2],
+                random_hue=[0.05],
+                augment_order=[
+                    "random_resized_crop",
+                    "random_brightness",
+                    "random_contrast",
+                    "random_saturation",
+                    "random_hue",
+                ],
+            )}),
+        
+        return rlds_config
+
+    # 1. update mixture_ratio
+    # 2. remake dataset with new mixture ratio
+    def adjust_mixture_ratio(self, new_ratio: float):
+        self.mixture_ratio = new_ratio
+        rlds_config = self.get_rlds_config()
+
+        # should clear the old dataset
+        del self.dataset
+        self.dataset, self.dataset_length, self.dataset_statistics = self.make_dataset(rlds_config)
+
+    def make_dataset(self, rlds_config):
+        return make_interleaved_dataset(**rlds_config, enable_cot=self.enable_cot, cot_tags=self.cot_tags)
+
+    def __iter__(self) -> Dict[str, Any]:
+        iterator = self.dataset.as_numpy_iterator()
+        while True:
+            try:
+                rlds_batch = next(iterator)
+                ret = self.batch_transform(rlds_batch)
+                if not ret:
+                    continue
+                yield ret
+            except StopIteration:
+                return
             except (tf.errors.DataLossError, tf.errors.InvalidArgumentError, tf.errors.FailedPreconditionError) as e:
                 overwatch.warning(f"Skipping corrupted record: {e}")
                 continue

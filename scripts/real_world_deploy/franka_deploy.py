@@ -100,7 +100,7 @@ class Config:
     num_images_in_input: int = 1                     # Number of images in the VLA input (default: 3)
     use_proprio: bool = False                         # Whether to include proprio state in input
 
-    center_crop: bool = True                         # Center crop? (if trained w/ random crop image aug)
+    center_crop: bool = False                         # Center crop? (if trained w/ random crop image aug)
     num_open_loop_steps: int = 1                    # Number of actions to execute open-loop before requerying policy
 
     unnorm_key: Union[str, Path] = ""                # Action un-normalization key
@@ -188,6 +188,8 @@ class OpenVLAServer:
             if self.cfg.pic_process == "cut":
                 image_full_original = image[1, 40:520, :, :]
                 image_wrist_original = image[0, 80:560, :, :]
+                # image_full_original = image[1, 160:640, :, :]
+                # image_wrist_original = image[0, 80:560, :, :]
             elif self.cfg.pic_process == "origin":
                 image_full_original = image[1, :, :, :]
                 image_wrist_original = image[0, :, :, :]
@@ -202,6 +204,7 @@ class OpenVLAServer:
             # instruction = "put carrot on plate"
             # unnorm_key = "bridge_orig" #"pmc16384"
             instruction = "Pick up the object on the table and place it into the white tray."
+            # instruction = "Open the drawer on the table."
             unnorm_key = "panda_rlds_dataset_real"
 
             # print("image:", image_primary)

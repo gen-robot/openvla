@@ -656,15 +656,25 @@ def make_interleaved_dataset(
             if "dataset_frame_transform_kwargs" in dataset_kwargs
             else {}
         )
-        dataset, _ = make_dataset_from_rlds(
-            **dataset_kwargs,
-            train=train,
-            num_parallel_calls=threads,
-            num_parallel_reads=reads,
-            dataset_statistics=all_dataset_statistics[dataset_kwargs["name"]],
-            enable_cot=enable_cot,
-            cot_tags=cot_tags,
-        )
+        if "dataset_statistics" in dataset_kwargs:
+            dataset, _ = make_dataset_from_rlds(
+                **dataset_kwargs,
+                train=train,
+                num_parallel_calls=threads,
+                num_parallel_reads=reads,
+                enable_cot=enable_cot,
+                cot_tags=cot_tags,
+            )
+        else:
+            dataset, _ = make_dataset_from_rlds(
+                **dataset_kwargs,
+                train=train,
+                num_parallel_calls=threads,
+                num_parallel_reads=reads,
+                dataset_statistics=all_dataset_statistics[dataset_kwargs["name"]],
+                enable_cot=enable_cot,
+                cot_tags=cot_tags,
+            )
         dataset = apply_trajectory_transforms(
             dataset.repeat(),
             **traj_transform_kwargs,

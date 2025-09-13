@@ -90,10 +90,10 @@ class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
         """Define data splits."""
         return {
             'train': self._generate_examples(paths=[
-                                                    # '/nvme_data/liangzhi/franka-dataset/process/square/',
-                                                    '/mnt/public/shiliangzhi/franka-dataset/process/pick_to_plate/',
+                                                    '/mnt/public/shiliangzhi/franka-dataset/process/open_drawer-sim-mimicgen/',
+                                                    '/mnt/public/shiliangzhi/franka-dataset/process/open_drawer/',
                                                     ],
-                                             max_items=[50]),
+                                             max_items=[1000, 50]),
         }
 
     def _generate_examples(self, paths, max_items) -> Iterator[Tuple[str, Any]]:
