@@ -186,8 +186,8 @@ class OpenVLAServer:
             unnorm_key = payload.get("unnorm_key", None)
 
             if self.cfg.pic_process == "cut":
-                image_full_original = image[1, 40:520, :, :]
-                image_wrist_original = image[0, 80:560, :, :]
+                image_full_original = image[1, :, 40:520, :]
+                image_wrist_original = image[0, :, 40:520, :]
                 # image_full_original = image[1, 160:640, :, :]
                 # image_wrist_original = image[0, 80:560, :, :]
             elif self.cfg.pic_process == "origin":
@@ -203,7 +203,7 @@ class OpenVLAServer:
             image_wrist = cv2.resize(image_wrist_original, (256, 256), interpolation=cv2.INTER_AREA)
             # instruction = "put carrot on plate"
             # unnorm_key = "bridge_orig" #"pmc16384"
-            instruction = "Pick up the object on the table and place it into the white tray."
+            instruction = "Pick up the eggplant from the table and place it on the white tray."
             # instruction = "Open the drawer on the table."
             unnorm_key = "panda_rlds_dataset_real"
 

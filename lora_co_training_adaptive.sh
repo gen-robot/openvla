@@ -43,7 +43,7 @@ elif [ ${env_id} = "PandaOpenDrawer-v1" ]; then
 else
     image_cut_start=0
 fi
-
+echo $vla_path
 torchrun --standalone --nnodes 1 --nproc-per-node ${num_gpus} vla-scripts/finetune_amcr.py \
     --vla_path ${vla_path} \
     --data_root_dir /mnt/public/shiliangzhi/openvla-datasets/franka_panda_${task_name}-sim_real_co_training \

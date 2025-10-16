@@ -53,7 +53,7 @@ from PIL import Image
 
 import h5py
 
-class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
+class PandaRldsDatasetSim(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for example dataset."""
 
     VERSION = tfds.core.Version('1.0.0')
@@ -113,7 +113,8 @@ class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
                         'observation': {
                             'image': data["front_rgb"][i].astype(np.uint8),
                             "state": states[i],
-                            'wrist_image': data["wrist_rgb"][i].astype(np.uint8),
+                            # "wrist_image": data["wrist_rgb"][i].astype(np.uint8),
+                            "wrist_image": np.zeros((480, 480, 3), dtype=np.uint8),
                         },
                         'language_instruction': lang,
                         'action': actions[i],
