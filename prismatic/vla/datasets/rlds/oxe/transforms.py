@@ -975,6 +975,7 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "panda_rlds_dataset": franka_panda_dataset_transform,
     "panda_rlds_dataset_real": franka_panda_dataset_transform,
     "panda_rlds_dataset_sim": franka_panda_dataset_transform,
+    "panda_rlds_dataset_side_real": franka_panda_dataset_transform,
     "panda_chunk_rlds_dataset": franka_panda_chunk_dataset_transform,
     "libero_lm_90": libero_dataset_transform,
     ### Cobot

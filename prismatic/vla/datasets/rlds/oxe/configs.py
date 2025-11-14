@@ -93,6 +93,7 @@ VALID_DATASET_NAMES = [
     "panda_rlds_dataset",
     "panda_rlds_dataset_real",
     "panda_rlds_dataset_sim",
+    "panda_rlds_dataset_side_real",
     "panda_chunk_rlds_dataset",
     "libero_lm_90"
 ]
@@ -222,6 +223,13 @@ OXE_DATASET_CONFIGS = {
         "action_encoding": ActionEncoding.EEF_POS,
     },
     "panda_rlds_dataset_sim": {
+        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": ["EEF_state", "gripper_state"],
+        "state_encoding": StateEncoding.POS_QUAT,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
+    "panda_rlds_dataset_side_real": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["EEF_state", "gripper_state"],

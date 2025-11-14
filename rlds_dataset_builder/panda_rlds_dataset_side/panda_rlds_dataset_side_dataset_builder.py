@@ -53,7 +53,7 @@ from PIL import Image
 
 import h5py
 
-class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
+class PandaRldsDatasetSide(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for example dataset."""
 
     VERSION = tfds.core.Version('1.0.0')
@@ -90,9 +90,19 @@ class PandaRldsDataset(tfds.core.GeneratorBasedBuilder):
         """Define data splits."""
         return {
             'train': self._generate_examples(paths=[
-                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed_side/pick_bowl_pot',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed/pick_banana',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed/pick_bread',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed/pick_cube',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed/pick_cucumber',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed/pick_dacong',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed/pick_grape',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed/pick_kiwi',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed/pick_pepper',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed/pick_sponge',
+                                                    '/mnt/public/chenyinuo001/huawei/dataset/processed/pick_strawberry',
                                                     ],
-                                             max_items=[9000]),
+                                             max_items=[50, 151, 31, 51, 27, 31, 201, 161, 201, 126, 106]),
         }
 
     def _generate_examples(self, paths, max_items) -> Iterator[Tuple[str, Any]]:
